@@ -1,14 +1,16 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
 
 from app.pipeline.aggregate import FrameObservation, aggregate_observations
 from app.pipeline.hysteresis import apply_hysteresis
-from app.pipeline.run import build_analysis_windows
-from app.schemas import Kickoff
+from app.pipeline.roi import RoiResult
+from app.pipeline.run import build_analysis_windows, run_analysis
+from app.schemas import BrandInput, Kickoff
 
 
 def observation(index: int, state: bool | None, half: str = "1T"):
@@ -94,6 +96,28 @@ class WindowTests(unittest.TestCase):
         self.assertEqual([(window.half, window.start_seconds, window.end_seconds)
                           for window in windows],
                          [("1T", 2, 11), ("2T", 11, 20)])
+
+    def test_run_analysis_uses_one_sample_per_second(self):
+        video = self._video(3)
+        crop = np.zeros((32, 100, 3), dtype=np.uint8)
+        roi = RoiResult(False, None, crop, None)
+        updates = []
+        with patch("app.pipeline.run.extract_led_roi", return_value=roi), \
+             patch("app.pipeline.run.read_led_text", return_value="NETTPLUS"):
+            result = run_analysis(
+                [video],
+                mode="single",
+                duration_mode="5min",
+                kickoff=Kickoff(),
+                brands=[BrandInput(id="nett", name="NETT plus")],
+                debug_dir=video.parent / "debug",
+                on_update=updates.append,
+            )
+        self.assertEqual(result.analyzed_seconds, 3)
+        self.assertEqual(result.brands[0].total_seconds, 3)
+        self.assertEqual(result.brands[0].appearances, 1)
+        self.assertEqual(result.brands[0].start_frames, [0])
+        self.assertTrue(updates)
 
 
 if __name__ == "__main__":

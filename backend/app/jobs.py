@@ -182,7 +182,14 @@ class JobManager:
             )
         )
 
-        while not worker.done() or not updates.empty():
+        while True:
+            if worker.done():
+                # The worker schedules its last callback with
+                # call_soon_threadsafe immediately before returning. Give the
+                # event loop one turn to enqueue it before ending processing.
+                await asyncio.sleep(0)
+                if updates.empty():
+                    break
             try:
                 update = await asyncio.wait_for(updates.get(), timeout=0.5)
             except asyncio.TimeoutError:
