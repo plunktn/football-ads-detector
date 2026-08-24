@@ -16,6 +16,7 @@ from .jobs import (
     JobManager,
     JobNotFoundError,
 )
+from .pipeline.video import get_video_info
 from .schemas import BrandInput, JobConfig
 
 
@@ -131,6 +132,15 @@ async def create_job(request: Request) -> dict[str, str]:
                 status_code=422,
                 detail=f"Falta el archivo {field}.",
             )
+        suffix = Path(upload.filename).suffix.lower()
+        if suffix not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"El archivo {field} no es un video compatible. "
+                    "Usá MP4, MOV, MKV o WebM."
+                ),
+            )
         uploads[field] = upload
 
     job_id = str(uuid4())
@@ -141,6 +151,18 @@ async def create_job(request: Request) -> dict[str, str]:
         for field, upload in uploads.items():
             destination = _video_destination(directory, field, upload)
             await run_in_threadpool(_save_upload, upload, destination)
+            try:
+                info = await run_in_threadpool(get_video_info, destination)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"El archivo {field} no se puede leer como video.",
+                ) from exc
+            if info.frame_count <= 0 or info.duration_seconds <= 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"El archivo {field} no contiene frames de video.",
+                )
             video_paths.append(destination)
 
         # Logos are stored for later pipeline phases. They do not block

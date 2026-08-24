@@ -26,6 +26,18 @@ export type BrandResult = {
   minutes: number;
   seconds: number;
   start_frames: number[];
+  segments: SegmentResult[];
+};
+
+export type SegmentResult = {
+  half: string;
+  clock_start: string;
+  clock_end: string;
+  video_seconds_start: number;
+  video_seconds_end: number;
+  start_frame: number;
+  end_frame: number;
+  duration_seconds: number;
 };
 
 export type Kickoff = {

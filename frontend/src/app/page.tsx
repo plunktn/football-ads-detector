@@ -93,6 +93,7 @@ function emptyResult(brand: Brand): BrandResult {
     minutes: 0,
     seconds: 0,
     start_frames: [],
+    segments: [],
   };
 }
 
@@ -102,6 +103,7 @@ type FileDropzoneProps = {
   hint: string;
   file: File | undefined;
   onFileChange: (file: File | undefined) => void;
+  onInvalid?: (message: string) => void;
 };
 
 function FileDropzone({
@@ -110,11 +112,19 @@ function FileDropzone({
   hint,
   file,
   onFileChange,
+  onInvalid,
 }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleFile = (candidate: File | undefined) => {
-    if (candidate) onFileChange(candidate);
+    if (!candidate) return;
+    const extension = `.${candidate.name.split(".").pop()?.toLowerCase()}`;
+    if (![".mp4", ".mov", ".mkv", ".webm"].includes(extension)) {
+      onInvalid?.("Ese archivo no parece un video compatible. Usá MP4, MOV, MKV o WebM.");
+      return;
+    }
+    onInvalid?.("");
+    onFileChange(candidate);
   };
 
   const handleInput = (event: ChangeEvent<HTMLInputElement>) => {
@@ -461,6 +471,7 @@ export default function Home() {
                       hint="o elegí un archivo · partido completo"
                       file={video}
                       onFileChange={setVideo}
+                      onInvalid={(message) => setConnectionError(message || null)}
                     />
                   </TabsContent>
                   <TabsContent value="split" className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -470,6 +481,7 @@ export default function Home() {
                       hint="primer tiempo"
                       file={videoFirst}
                       onFileChange={setVideoFirst}
+                      onInvalid={(message) => setConnectionError(message || null)}
                     />
                     <FileDropzone
                       id="video-second"
@@ -477,6 +489,7 @@ export default function Home() {
                       hint="segundo tiempo"
                       file={videoSecond}
                       onFileChange={setVideoSecond}
+                      onInvalid={(message) => setConnectionError(message || null)}
                     />
                   </TabsContent>
                 </Tabs>
@@ -716,6 +729,20 @@ export default function Home() {
                     Volver a intentar
                   </Button>
                 ) : null}
+
+                {job?.status === "processing" && resultBrands.length > 0 && (
+                  <div>
+                    <div className="mb-4">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+                        Lectura parcial
+                      </p>
+                      <h3 className="mt-1 text-lg font-semibold">
+                        Exposición acumulada
+                      </h3>
+                    </div>
+                    <ResultsTable brands={brands} resultBrands={resultBrands} />
+                  </div>
+                )}
 
                 {job?.kickoff && (
                   <div className="grid gap-3 sm:grid-cols-2">
