@@ -42,8 +42,16 @@ def _scan_for_kickoff(
     *,
     expected_half: str | None,
     start_seconds: float = 0.0,
-    max_seconds: float = 120.0,
+    max_seconds: float = 900.0,
 ) -> float | None:
+    """Scan up to ~15 minutes for the first low scoreboard clock.
+
+    Full-match files often include tunnel / warm-up before 1T, so a 2-minute
+    window falls back to t=0 and skips the actual LED analysis window.
+
+    Seeking on long broadcast MP4s is expensive, so the coarse pass uses a
+    15-second stride and then refines around ``t - clock``.
+    """
     try:
         info = get_video_info(path)
     except ValueError:
@@ -66,7 +74,34 @@ def _scan_for_kickoff(
                     expected_half is None or half == expected_half or half is None
                 ):
                     return t
-            t += 1.0
+                # Running clock ⇒ estimate kickoff and refine nearby.
+                if clock is not None and clock <= 20 * 60:
+                    estimated = max(0.0, t - float(clock))
+                    refine_start = max(0.0, estimated - 4.0)
+                    refine_end = min(end_seconds, estimated + 25.0)
+                    best = None
+                    rt = refine_start
+                    while rt < refine_end:
+                        ok_r, frame_r, _ = read_frame_at_seconds(cap, rt)
+                        if ok_r and frame_r is not None:
+                            text_r = read_scoreboard_text(frame_r)
+                            clock_r = parse_clock(text_r)
+                            half_r = parse_half(text_r)
+                            if clock_r is not None and clock_r <= 8 and (
+                                expected_half is None
+                                or half_r == expected_half
+                                or half_r is None
+                            ):
+                                return rt
+                            if clock_r is not None and clock_r <= 20:
+                                candidate = max(0.0, rt - float(clock_r))
+                                if best is None or clock_r < best[0]:
+                                    best = (clock_r, candidate)
+                        rt += 2.0
+                    if best is not None:
+                        return best[1]
+                    return estimated
+            t += 15.0
     finally:
         cap.release()
     return None
@@ -112,30 +147,41 @@ def _detect_second_half_single(
                     return t
                 if clock is not None:
                     previous_clock = clock
-            t += 1.0
+            t += 5.0
     finally:
         cap.release()
     return None
 
 
-def detect_kickoffs(video_paths: list[str | Path], mode: str) -> Kickoff:
+def detect_kickoffs(
+    video_paths: list[str | Path],
+    mode: str,
+    duration_mode: str = "full",
+) -> Kickoff:
     """Detect kickoff positions for single or split uploads.
 
-    The scan is deliberately limited for the first-half search. A clip without
-    a readable scoreboard therefore falls back quickly to t=0.
+    The first-half scan covers up to ~15 minutes of file time so pre-match
+    tunnel footage does not force a t=0 fallback. Second-half search is skipped
+    for short analysis windows.
     """
     if not video_paths:
         return Kickoff(note="fallback t=0")
 
+    need_second_half = duration_mode == "full"
+
     if mode == "split" and len(video_paths) >= 2:
         first = _scan_for_kickoff(video_paths[0], expected_half="1T")
-        second = _scan_for_kickoff(video_paths[1], expected_half="2T")
+        second = (
+            _scan_for_kickoff(video_paths[1], expected_half="2T")
+            if need_second_half
+            else None
+        )
         first_value = first if first is not None else 0.0
-        second_value = second if second is not None else 0.0
+        second_value = second if second is not None else (0.0 if need_second_half else None)
         missing = []
         if first is None:
             missing.append("1T")
-        if second is None:
+        if need_second_half and second is None:
             missing.append("2T")
         note = (
             f"fallback t=0 ({', '.join(missing)})"
@@ -156,13 +202,15 @@ def detect_kickoffs(video_paths: list[str | Path], mode: str) -> Kickoff:
         duration = get_video_info(path).duration_seconds
     except ValueError:
         duration = 0.0
-    if first is not None:
+    if need_second_half and first is not None:
         second = _detect_second_half_single(path, first, duration)
 
     if first is None and second is None:
         note = "fallback t=0"
-    elif second is None:
+    elif second is None and need_second_half:
         note = "1T detectado por marcador; 2T no encontrado"
+    elif second is None:
+        note = "detectado por marcador"
     else:
         note = "detectado por marcador"
     return Kickoff(

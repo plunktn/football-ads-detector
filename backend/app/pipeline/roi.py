@@ -15,13 +15,13 @@ from .video import get_video_info, read_frame_at_seconds
 
 logger = logging.getLogger(__name__)
 
-# OpenCV H for grass is ~35–85. Cap below cyan LED (~90) so NETT plus
-# glow is not classified as turf (that would lift the crop into the banners).
-_GRASS_LOWER = np.array([35, 40, 40], dtype=np.uint8)
+# Night broadcasts push turf hue toward ~30–34 and darken V. Keep the upper
+# bound below cyan LEDs (~90) so NETT plus glow is not classified as grass.
+_GRASS_LOWER = np.array([28, 25, 30], dtype=np.uint8)
 _GRASS_UPPER = np.array([85, 255, 255], dtype=np.uint8)
-_GRASS_MIN_RATIO = 0.12
+_GRASS_MIN_RATIO = 0.08
 _MIN_VALID_COLUMNS_RATIO = 0.15
-_MIN_LED_PX = 22
+_MIN_LED_PX = 18
 _COLUMN_STEP = 4
 _MEDIAN_WINDOW = 21
 _GRASS_Y_TOP_FRAC = 0.28
@@ -44,6 +44,22 @@ class ProbeStats:
     kept: int = 0
     skipped: int = 0
     saved: int = 0
+
+
+@dataclass(frozen=True)
+class _LedBand:
+    y0: int
+    y1: int
+    score: float
+    kind: str
+
+    @property
+    def height(self) -> int:
+        return max(0, self.y1 - self.y0)
+
+    @property
+    def center(self) -> float:
+        return 0.5 * (self.y0 + self.y1)
 
 
 class DebugCropWriter:
@@ -149,6 +165,108 @@ def _median_nongrass_run(mask: np.ndarray, y_grass: np.ndarray) -> int:
     return int(np.median(samples)) if samples else 0
 
 
+def _find_color_bands(
+    frame: np.ndarray,
+    *,
+    y_min: int,
+    y_max: int,
+) -> list[_LedBand]:
+    """Find bright full-width yellow/cyan LED candidates."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    masks = {
+        "yellow": cv2.inRange(hsv, (15, 60, 120), (45, 255, 255)),
+        "cyan": cv2.inRange(hsv, (85, 35, 120), (125, 255, 255)),
+    }
+    height = frame.shape[0]
+    max_h = led_height_px(height) + 20
+    bands: list[_LedBand] = []
+
+    for kind, mask in masks.items():
+        row = (mask[y_min:y_max] > 0).mean(axis=1)
+        if row.size == 0 or float(row.max()) < 0.10:
+            continue
+        used = np.zeros(row.shape, dtype=bool)
+        for _ in range(3):
+            available = row.copy()
+            available[used] = 0
+            peak_rel = int(available.argmax())
+            score = float(available[peak_rel])
+            if score < 0.10:
+                break
+            thr = max(0.08, score * 0.40)
+            lo = hi = peak_rel
+            while lo > 0 and row[lo - 1] >= thr:
+                lo -= 1
+            while hi < len(row) - 1 and row[hi + 1] >= thr:
+                hi += 1
+            used[lo : hi + 1] = True
+            y0 = y_min + lo
+            y1 = y_min + hi + 1
+            band_h = y1 - y0
+            if band_h < _MIN_LED_PX:
+                continue
+            if band_h > max_h:
+                mid = (y0 + y1) // 2
+                half = max_h // 2
+                y0 = mid - half
+                y1 = mid + half
+            bands.append(_LedBand(y0=y0, y1=y1, score=score, kind=kind))
+    return bands
+
+
+def _pick_led_band(
+    bands: list[_LedBand],
+    *,
+    y_grass: np.ndarray | None,
+    frame_h: int,
+) -> _LedBand | None:
+    if not bands:
+        return None
+
+    led_h = led_height_px(frame_h)
+    touch = float(np.median(y_grass)) if y_grass is not None else None
+    scored: list[tuple[float, _LedBand]] = []
+
+    for band in bands:
+        if touch is None:
+            # Without grass, keep mid/lower full-width boards and avoid the
+            # scoreboard strip in the upper quarter.
+            if band.center < frame_h * 0.28:
+                continue
+            rank = -40.0 * band.score + abs(band.center - frame_h * 0.55)
+            scored.append((rank, band))
+            continue
+
+        # Ideal: LED bottom kisses the touchline from above. Night broadcasts
+        # often bleed a few pixels of LED into the grass estimate, so allow a
+        # small overlap below the line too.
+        gap_above = touch - band.y1  # >0 means band fully above grass
+        gap_below = band.y0 - touch  # >0 means band fully below grass
+        intersects = band.y0 <= touch + 12 and band.y1 >= touch - led_h * 2
+        if not intersects and band.score < 0.35:
+            continue
+        if gap_below > led_h:
+            # Band sits well inside the pitch — usually a false yellow patch.
+            continue
+        if band.center < frame_h / 3.0 and gap_above > led_h * 2:
+            # Upper-third band far from grass → scoreboard / stands.
+            continue
+
+        proximity = abs(min(gap_above, 0) if gap_above > 0 else gap_below)
+        # Prefer stronger, thicker boards near the touchline. No cyan bias:
+        # ECUABET is often yellow while NETT plus is cyan.
+        height_bonus = -0.15 * min(band.height, led_h)
+        rank = proximity - 55.0 * band.score + height_bonus
+        if intersects:
+            rank -= 25.0
+        scored.append((rank, band))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[0])
+    return scored[0][1]
+
+
 def _led_polygon(y_grass: np.ndarray, frame_h: int, frame_w: int) -> np.ndarray:
     led_h = led_height_px(frame_h)
     xs = np.arange(0, frame_w, _COLUMN_STEP, dtype=np.int32)
@@ -164,15 +282,17 @@ def _led_polygon(y_grass: np.ndarray, frame_h: int, frame_w: int) -> np.ndarray:
 
 def _draw_overlay(
     frame: np.ndarray,
-    y_grass: np.ndarray,
-    polygon: np.ndarray,
+    y_grass: np.ndarray | None,
+    y0: int,
+    y1: int,
 ) -> np.ndarray:
     overlay = frame.copy()
     width = frame.shape[1]
-    for x in range(0, width, _COLUMN_STEP):
-        y = int(round(y_grass[x]))
-        cv2.circle(overlay, (x, y), 1, (0, 255, 255), -1)
-    cv2.polylines(overlay, [polygon], isClosed=True, color=(0, 255, 0), thickness=2)
+    if y_grass is not None:
+        for x in range(0, width, _COLUMN_STEP):
+            y = int(round(y_grass[x]))
+            cv2.circle(overlay, (x, y), 1, (0, 255, 255), -1)
+    cv2.rectangle(overlay, (0, y0), (width - 1, y1 - 1), (0, 255, 0), 2)
     return overlay
 
 
@@ -188,10 +308,37 @@ def extract_led_roi(frame: np.ndarray) -> RoiResult:
     height, width = frame.shape[:2]
     mask = grass_mask(frame)
     grass_ratio = float((mask > 0).mean())
+    y_grass = _touchline_ys(mask) if grass_ratio >= _GRASS_MIN_RATIO else None
+
+    bands = _find_color_bands(
+        frame,
+        y_min=int(height * 0.22),
+        y_max=int(height * 0.90),
+    )
+    band = _pick_led_band(bands, y_grass=y_grass, frame_h=height)
+
+    if y_grass is not None:
+        median_line = float(np.median(y_grass))
+        if median_line < height / 3.0 and band is None:
+            return _skipped("wide_shot")
+
+    if band is not None:
+        y0 = max(0, band.y0)
+        y1 = min(height, band.y1)
+        if (y1 - y0) < _MIN_LED_PX:
+            return _skipped("led_too_thin")
+        # Rectangular crop — jagged grass masks destroy OCR on LED text.
+        crop = frame[y0:y1, 0:width]
+        overlay = _draw_overlay(frame, y_grass, y0, y1)
+        return RoiResult(
+            skipped=False,
+            reason=None,
+            crop_bgr=crop,
+            debug_overlay=overlay,
+        )
+
     if grass_ratio < _GRASS_MIN_RATIO:
         return _skipped("low_grass")
-
-    y_grass = _touchline_ys(mask)
     if y_grass is None:
         return _skipped("few_grass_points")
 
@@ -215,12 +362,12 @@ def extract_led_roi(frame: np.ndarray) -> RoiResult:
     if (y1 - y0) < _MIN_LED_PX:
         return _skipped("led_too_thin")
 
-    isolated = cv2.bitwise_and(frame, frame, mask=led_mask)
-    crop = isolated[y0:y1, x0:x1]
+    # Prefer a dense rectangle over the masked polygon for OCR.
+    crop = frame[y0:y1, x0:x1]
     if crop.size == 0:
         return _skipped("empty_crop")
 
-    overlay = _draw_overlay(frame, y_grass, polygon)
+    overlay = _draw_overlay(frame, y_grass, y0, y1)
     return RoiResult(
         skipped=False,
         reason=None,

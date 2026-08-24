@@ -227,6 +227,7 @@ class JobManager:
                 detect_kickoffs,
                 record.video_paths,
                 record.config.mode,
+                record.config.duration_mode,
             )
             logger.info(
                 "Job %s kickoff: 1T %.1fs, 2T %s (%s)",

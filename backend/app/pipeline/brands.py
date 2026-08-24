@@ -14,7 +14,13 @@ from ..schemas import BrandInput
 # Canonical example from PLAN.md §2 / Fase 5. Merged whenever the user
 # name is a close variant of these brands.
 _CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
-    "NETT PLUS": ("NETTPLUS", "NETPLUS", "NET PLUS", "NETT PLUS"),
+    "NETT PLUS": ("NETTPLUS", "NETPLUS", "NET PLUS", "NETT PLUS", "NETTPIUS"),
+    "ECUABET": (
+        "ECUABET",
+        "LIGAECUABET",
+        "LIGA ECUABET",
+        "ECUA BET",
+    ),
     "LIONS SPORTS AND MEDIA": (
         "LIONS SPORTS AND MEDIA",
         "LIONS SPORT AND MEDIA",
@@ -99,13 +105,18 @@ def brand_present(brand: PreparedBrand, raw_text: str) -> bool:
     haystack = norm(raw_text)
     if not haystack:
         return False
+    compact_hay = _compact(haystack)
 
     for needle in brand.needles:
         if needle and needle in haystack:
             return True
         compact_needle = _compact(needle)
-        if compact_needle and compact_needle in _compact(haystack):
+        if compact_needle and compact_needle in compact_hay:
             return True
+
+    # Fuzzy matching on tiny OCR crumbs ("T", "I") false-positives long names.
+    if len(compact_hay) < _MIN_FUZZY_CHARS:
+        return False
 
     name_n = norm(brand.name)
     if not name_n:

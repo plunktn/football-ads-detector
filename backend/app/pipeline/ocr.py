@@ -78,5 +78,24 @@ def read_led_text(crop_bgr: np.ndarray | None) -> str:
     """OCR only the LED strip crop. Never the full frame."""
     if crop_bgr is None or crop_bgr.size == 0:
         return ""
-    # LED strips are short; 1.5× helps when led_h is near the 28px floor.
-    return read_image_text(crop_bgr, min_side_for_upscale=200)
+    # Always upscale the short LED strip — cyan/yellow boards are often <40px tall.
+    texts = [read_image_text(crop_bgr, min_side_for_upscale=10_000)]
+    height = crop_bgr.shape[0]
+    if height < 80:
+        enlarged = cv2.resize(
+            crop_bgr,
+            None,
+            fx=2.0,
+            fy=2.0,
+            interpolation=cv2.INTER_CUBIC,
+        )
+        texts.append(read_image_text(enlarged, min_side_for_upscale=10_000))
+    # Deduplicate while preserving order.
+    merged: list[str] = []
+    seen: set[str] = set()
+    for chunk in " ".join(texts).split():
+        key = chunk.upper()
+        if key not in seen:
+            seen.add(key)
+            merged.append(chunk)
+    return " ".join(merged)
