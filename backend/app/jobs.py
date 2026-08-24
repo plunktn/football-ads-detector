@@ -1,10 +1,14 @@
 import asyncio
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
 
+from .pipeline.brands import generate_aliases, match_brand_ids, prepare_brands
+from .pipeline.ocr import read_led_text
+from .pipeline.roi import RoiResult, probe_led_rois
 from .pipeline.scoreboard import detect_kickoffs
 from .schemas import (
     BrandInput,
@@ -83,7 +87,12 @@ class JobManager:
         record = JobRecord(
             id=job_id,
             directory=directory,
-            brands=brands,
+            brands=[
+                brand.model_copy(
+                    update={"aliases": generate_aliases(brand.name, brand.aliases)}
+                )
+                for brand in brands
+            ],
             video_paths=video_paths,
             config=config,
         )
@@ -150,6 +159,37 @@ class JobManager:
     def _format_sse(event: dict) -> str:
         return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
+    @staticmethod
+    def _probe_led(record: JobRecord, kickoff: Kickoff) -> str:
+        """Phase 4–5: sample LED crops + OCR. Full hysteresis stays in phase 6."""
+        prepared = prepare_brands(record.brands)
+        hits: Counter[str] = Counter()
+
+        def on_crop(frame_idx: int, roi: RoiResult) -> None:
+            if roi.crop_bgr is None:
+                return
+            raw = read_led_text(roi.crop_bgr)
+            if raw:
+                logger.info("LED OCR frame %s: %s", frame_idx, raw[:160])
+            for brand_id in match_brand_ids(raw, prepared):
+                hits[brand_id] += 1
+
+        stats = probe_led_rois(
+            record.video_paths[0],
+            kickoff.first_half_video_seconds,
+            record.directory / "debug",
+            on_crop=on_crop,
+        )
+        names = {brand.id: brand.name for brand in prepared}
+        seen = [names[brand_id] for brand_id in hits]
+        ocr_bit = (
+            "OCR: " + ", ".join(seen) if seen else "OCR: sin marcas en la muestra"
+        )
+        return (
+            f"ROI LED: {stats.kept} recortes, {stats.skipped} omitidos "
+            f"({stats.saved} debug). {ocr_bit}"
+        )
+
     async def _run_job(self, record: JobRecord) -> None:
         try:
             await self._publish(
@@ -174,20 +214,27 @@ class JobManager:
                 record,
                 status="processing",
                 progress=0.1,
-                label="Kickoff detectado — preparando análisis…",
+                label="Recortando la valla LED y leyendo marcas…",
+                kickoff=kickoff,
+            )
+            probe_label = await asyncio.to_thread(self._probe_led, record, kickoff)
+            await self._publish(
+                record,
+                status="processing",
+                progress=0.35,
+                label=probe_label,
                 kickoff=kickoff,
             )
 
-            # Phase 2 keeps a five-second worker so the UI/SSE contract can be
-            # verified before the real LED pipeline replaces this block.
+            # Phase 6 replaces this dummy tail with hysteresis + aggregation.
             for step in range(1, 6):
                 await asyncio.sleep(1)
-                progress = round(0.1 + step * 0.18, 2)
+                progress = round(0.35 + step * 0.12, 2)
                 await self._publish(
                     record,
                     status="processing",
                     progress=progress,
-                    label=f"Preparando análisis de prueba… ({int(progress * 100)}%)",
+                    label=f"{probe_label} — {int(progress * 100)}%",
                     kickoff=kickoff,
                 )
 

@@ -1,35 +1,11 @@
-import logging
 import re
 from pathlib import Path
-from typing import Any
 
 import cv2
 
 from ..schemas import Kickoff
+from .ocr import read_image_text
 from .video import get_video_info, read_frame_at_seconds
-
-
-logger = logging.getLogger(__name__)
-
-_reader: Any | None = None
-_reader_attempted = False
-
-
-def _get_reader() -> Any | None:
-    """Load RapidOCR on first use so the API can start without model work."""
-    global _reader, _reader_attempted
-    if _reader_attempted:
-        return _reader
-
-    _reader_attempted = True
-    try:
-        from rapidocr_onnxruntime import RapidOCR
-
-        _reader = RapidOCR()
-    except Exception as exc:  # pragma: no cover - depends on local OCR install
-        logger.warning("RapidOCR no disponible; se usará fallback t=0: %s", exc)
-        _reader = None
-    return _reader
 
 
 def scoreboard_crop(frame):
@@ -38,42 +14,9 @@ def scoreboard_crop(frame):
     return frame[0 : int(0.22 * height), 0 : int(0.42 * width)]
 
 
-def _texts_from_ocr_output(output: Any) -> list[str]:
-    """Normalize RapidOCR's result shape across supported package versions."""
-    if isinstance(output, tuple):
-        output = output[0]
-    if not isinstance(output, list):
-        return []
-
-    texts: list[str] = []
-    for item in output:
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            text = item[1]
-            if isinstance(text, str):
-                texts.append(text)
-    return texts
-
-
 def read_scoreboard_text(frame) -> str:
     """OCR the fixed upper-left scoreboard crop only."""
-    crop = scoreboard_crop(frame)
-    if crop.size == 0:
-        return ""
-
-    reader = _get_reader()
-    if reader is None:
-        return ""
-
-    try:
-        result = reader(crop)
-        texts = _texts_from_ocr_output(result)
-        if min(crop.shape[:2]) < 160:
-            enlarged = cv2.resize(crop, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-            texts.extend(_texts_from_ocr_output(reader(enlarged)))
-        return " ".join(texts)
-    except Exception as exc:  # pragma: no cover - model/runtime dependent
-        logger.debug("Falló OCR del marcador: %s", exc)
-        return ""
+    return read_image_text(scoreboard_crop(frame))
 
 
 def parse_clock(text: str) -> int | None:
