@@ -1,14 +1,12 @@
 import asyncio
 import json
 import logging
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
 
-from .pipeline.brands import generate_aliases, match_brand_ids, prepare_brands
-from .pipeline.ocr import read_led_text
-from .pipeline.roi import RoiResult, probe_led_rois
+from .pipeline.brands import generate_aliases
+from .pipeline.run import AnalysisUpdate, run_analysis
 from .pipeline.scoreboard import detect_kickoffs
 from .schemas import (
     BrandInput,
@@ -159,36 +157,56 @@ class JobManager:
     def _format_sse(event: dict) -> str:
         return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-    @staticmethod
-    def _probe_led(record: JobRecord, kickoff: Kickoff) -> str:
-        """Phase 4–5: sample LED crops + OCR. Full hysteresis stays in phase 6."""
-        prepared = prepare_brands(record.brands)
-        hits: Counter[str] = Counter()
+    async def _run_analysis_with_updates(
+        self,
+        record: JobRecord,
+        kickoff: Kickoff,
+    ):
+        """Run OpenCV/OCR off-loop while forwarding one-Hz progress to SSE."""
+        updates: asyncio.Queue[AnalysisUpdate] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
 
-        def on_crop(frame_idx: int, roi: RoiResult) -> None:
-            if roi.crop_bgr is None:
-                return
-            raw = read_led_text(roi.crop_bgr)
-            if raw:
-                logger.info("LED OCR frame %s: %s", frame_idx, raw[:160])
-            for brand_id in match_brand_ids(raw, prepared):
-                hits[brand_id] += 1
+        def on_update(update: AnalysisUpdate) -> None:
+            loop.call_soon_threadsafe(updates.put_nowait, update)
 
-        stats = probe_led_rois(
-            record.video_paths[0],
-            kickoff.first_half_video_seconds,
-            record.directory / "debug",
-            on_crop=on_crop,
+        worker = asyncio.create_task(
+            asyncio.to_thread(
+                run_analysis,
+                record.video_paths,
+                mode=record.config.mode,
+                duration_mode=record.config.duration_mode,
+                kickoff=kickoff,
+                brands=record.brands,
+                debug_dir=record.directory / "debug",
+                on_update=on_update,
+            )
         )
-        names = {brand.id: brand.name for brand in prepared}
-        seen = [names[brand_id] for brand_id in hits]
-        ocr_bit = (
-            "OCR: " + ", ".join(seen) if seen else "OCR: sin marcas en la muestra"
-        )
-        return (
-            f"ROI LED: {stats.kept} recortes, {stats.skipped} omitidos "
-            f"({stats.saved} debug). {ocr_bit}"
-        )
+
+        while not worker.done() or not updates.empty():
+            try:
+                update = await asyncio.wait_for(updates.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            progress = 0.1
+            if update.total_samples:
+                progress += 0.85 * (
+                    update.processed_samples / update.total_samples
+                )
+            clock = int(round(update.match_seconds))
+            label = (
+                f"{update.half} {clock // 60:02d}:{clock % 60:02d} "
+                "— leyendo valla LED"
+            )
+            await self._publish(
+                record,
+                status="processing",
+                progress=progress,
+                label=label,
+                kickoff=kickoff,
+                partial_brands=update.partial_brands,
+            )
+
+        return await worker
 
     async def _run_job(self, record: JobRecord) -> None:
         try:
@@ -217,43 +235,21 @@ class JobManager:
                 label="Recortando la valla LED y leyendo marcas…",
                 kickoff=kickoff,
             )
-            probe_label = await asyncio.to_thread(self._probe_led, record, kickoff)
-            await self._publish(
-                record,
-                status="processing",
-                progress=0.35,
-                label=probe_label,
-                kickoff=kickoff,
-            )
-
-            # Phase 6 replaces this dummy tail with hysteresis + aggregation.
-            for step in range(1, 6):
-                await asyncio.sleep(1)
-                progress = round(0.35 + step * 0.12, 2)
-                await self._publish(
-                    record,
-                    status="processing",
-                    progress=progress,
-                    label=f"{probe_label} — {int(progress * 100)}%",
-                    kickoff=kickoff,
-                )
-
+            analysis = await self._run_analysis_with_updates(record, kickoff)
             result = JobResult(
-                analyzed_seconds=0,
-                brands=[
-                    BrandResult(
-                        brand_id=brand.id or brand.name.lower().replace(" ", "-"),
-                        name=brand.name,
-                    )
-                    for brand in record.brands
-                ],
+                analyzed_seconds=analysis.analyzed_seconds,
+                brands=analysis.brands,
             )
             record.result = result
+            (record.directory / "result.json").write_text(
+                result.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
             await self._publish(
                 record,
                 status="completed",
                 progress=1.0,
-                label="Análisis de prueba completado",
+                label="Análisis completado",
                 kickoff=kickoff,
                 partial_brands=result.brands,
             )

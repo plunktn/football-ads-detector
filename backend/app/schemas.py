@@ -40,6 +40,17 @@ class Kickoff(BaseModel):
     note: str = "fallback t=0"
 
 
+class SegmentResult(BaseModel):
+    half: str
+    clock_start: str
+    clock_end: str
+    video_seconds_start: float
+    video_seconds_end: float
+    start_frame: int
+    end_frame: int
+    duration_seconds: int
+
+
 class BrandResult(BaseModel):
     brand_id: str
     name: str
@@ -48,6 +59,7 @@ class BrandResult(BaseModel):
     minutes: int = 0
     seconds: int = 0
     start_frames: list[int] = Field(default_factory=list)
+    segments: list[SegmentResult] = Field(default_factory=list)
 
 
 class JobResult(BaseModel):
