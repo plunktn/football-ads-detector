@@ -1,0 +1,55 @@
+# OCR / playlist names → catalog names used in commercial reports.
+# Matching is case-insensitive and ignores punctuation/spaces.
+
+catalog:
+  CAMARA DE COMERCIO:
+    - CAMERO
+    - GAMERO
+    - CAMARA DE COMERCIO
+    - CAMARA COMERCIO
+  NETPLUS:
+    - NETT PLUS
+    - NETTPLUS
+    - NET PLUS
+    - NETPLUS
+    - NETT.PLUS
+    - NETT.plus
+    - NETTPIUS
+    - NETTOIUS
+    - NETTOLUS
+  HOTEL VICTORIA:
+    - GRAND VICTORIA
+    - HOTEL VICTORIA
+    - HOTEL GRAND VICTORIA
+  CABLE RED:
+    - COBLERED
+    - CABLE RED
+    - CABLED
+    - CABLEDRED
+  ECUABET:
+    - ECUABET
+    - ECUA BET
+    - ECUABET COM
+  LIONS SPORTS AND MEDIA:
+    - LIONS SPORTS AND MEDIA
+    - LIONS SPORT AND MEDIA
+    - LIONS SPORTS MEDIA
+    - LIONS
+  PILSENER:
+    - PILSENER
+    - PILSEN
+  TISANITA:
+    - TISANITA
+  UTPL:
+    - UTPL
+    - UTPL POSGRADO
+
+# Broadcast graphics — never counted as stadium inventory.
+overlay_ignore:
+  - ZAPPING
+  - XTRIM
+  - SHOWTIME
+  - VIVO
+  - WWW
+  - HTTP
+  - HTTPS

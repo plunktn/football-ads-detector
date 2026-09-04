@@ -16,6 +16,9 @@ class FrameObservation:
     frame_idx: int
     detected_brand_ids: frozenset[str]
     skipped: bool
+    zone_id: str | None = None
+    posicion: str | None = None
+    tipo_panel: str | None = None
 
 
 def _clock(seconds: float) -> str:
@@ -64,6 +67,9 @@ def _aggregate_one_half(
                 start_frame=first.frame_idx,
                 end_frame=last.frame_idx,
                 duration_seconds=true_count,
+                zone_id=first.zone_id,
+                posicion=first.posicion,
+                tipo_panel=first.tipo_panel,
             )
         )
         start_index = None
@@ -125,6 +131,8 @@ def aggregate_observations(
         ]
         segments = [segment for result in per_half for segment in result.segments]
         total_seconds = sum(segment.duration_seconds for segment in segments)
+        count_1t = sum(1 for segment in segments if segment.half == "1T")
+        count_2t = sum(1 for segment in segments if segment.half == "2T")
         results.append(
             BrandResult(
                 brand_id=brand_id,
@@ -135,6 +143,8 @@ def aggregate_observations(
                 seconds=total_seconds % 60,
                 start_frames=[segment.start_frame for segment in segments],
                 segments=segments,
+                count_1t=count_1t,
+                count_2t=count_2t,
             )
         )
     return results

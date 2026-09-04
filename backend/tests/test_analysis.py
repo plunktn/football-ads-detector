@@ -6,8 +6,10 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
+from app.domain.zones import DEFAULT_PANEL_ZONES
 from app.pipeline.aggregate import FrameObservation, aggregate_observations
 from app.pipeline.hysteresis import apply_hysteresis
+from app.pipeline.ocr import OcrHit
 from app.pipeline.roi import RoiResult
 from app.pipeline.run import build_analysis_windows, run_analysis
 from app.schemas import BrandInput, Kickoff
@@ -47,6 +49,23 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(result.appearances, 2)
         self.assertEqual(result.total_seconds, 3)
         self.assertEqual(result.start_frames, [0, 120])
+
+    def test_segment_copies_zone_from_observation(self):
+        samples = [
+            FrameObservation(
+                half="1T",
+                time_seconds=float(index),
+                frame_idx=index * 30,
+                detected_brand_ids=frozenset({"nett"}),
+                skipped=False,
+                zone_id="led_lateral_main",
+                posicion="LATERAL_MAIN",
+            )
+            for index in range(3)
+        ]
+        result = aggregate_observations(samples, [("nett", "NETT plus")])[0]
+        self.assertEqual(result.segments[0].zone_id, "led_lateral_main")
+        self.assertEqual(result.segments[0].posicion, "LATERAL_MAIN")
 
     def test_three_skips_close_without_counting_unknown_samples(self):
         result = aggregate_observations(
@@ -97,13 +116,32 @@ class WindowTests(unittest.TestCase):
                           for window in windows],
                          [("1T", 2, 11), ("2T", 11, 20)])
 
+    def test_custom_minutes_window(self):
+        video = self._video(1200)
+        windows = build_analysis_windows(
+            [video],
+            mode="single",
+            duration_mode="16min",
+            kickoff=Kickoff(first_half_video_seconds=10),
+        )
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(windows[0].half, "1T")
+        self.assertEqual(windows[0].start_seconds, 10)
+        self.assertEqual(windows[0].end_seconds, 10 + 16 * 60)
+
     def test_run_analysis_uses_one_sample_per_second(self):
         video = self._video(3)
         crop = np.zeros((32, 100, 3), dtype=np.uint8)
         roi = RoiResult(False, None, crop, None)
         updates = []
-        with patch("app.pipeline.run.extract_led_roi", return_value=roi), \
-             patch("app.pipeline.run.read_led_text", return_value="NETTPLUS"):
+        with patch("app.pipeline.run.locate_zones", return_value=[(DEFAULT_PANEL_ZONES[0], roi)]), \
+             patch(
+                 "app.pipeline.run.read_led_hits",
+                 return_value=[
+                     OcrHit(text="NETTPLUS", x_center=0.2),
+                     OcrHit(text="NETTPLUS", x_center=0.8),
+                 ],
+             ):
             result = run_analysis(
                 [video],
                 mode="single",
@@ -117,6 +155,8 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(result.brands[0].total_seconds, 3)
         self.assertEqual(result.brands[0].appearances, 1)
         self.assertEqual(result.brands[0].start_frames, [0])
+        self.assertEqual(result.brands[0].segments[0].zone_id, "led_lateral_main")
+        self.assertEqual(result.brands[0].segments[0].posicion, "LATERAL_MAIN")
         self.assertTrue(updates)
 
 

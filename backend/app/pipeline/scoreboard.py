@@ -3,20 +3,28 @@ from pathlib import Path
 
 import cv2
 
+from ..domain.stadium import CameraProfile
 from ..schemas import Kickoff
 from .ocr import read_image_text
 from .video import get_video_info, read_frame_at_seconds
 
 
-def scoreboard_crop(frame):
+def scoreboard_crop(frame, profile: CameraProfile | None = None):
     """Return only the broadcast scoreboard area, never the LED area."""
     height, width = frame.shape[:2]
-    return frame[0 : int(0.22 * height), 0 : int(0.42 * width)]
+    if profile is None:
+        return frame[0 : int(0.22 * height), 0 : int(0.42 * width)]
+    crop = profile.scoreboard_crop
+    x0 = int(crop.x * width)
+    y0 = int(crop.y * height)
+    x1 = min(width, int((crop.x + crop.w) * width))
+    y1 = min(height, int((crop.y + crop.h) * height))
+    return frame[y0:y1, x0:x1]
 
 
-def read_scoreboard_text(frame) -> str:
+def read_scoreboard_text(frame, profile: CameraProfile | None = None) -> str:
     """OCR the fixed upper-left scoreboard crop only."""
-    return read_image_text(scoreboard_crop(frame))
+    return read_image_text(scoreboard_crop(frame, profile))
 
 
 def parse_clock(text: str) -> int | None:
@@ -43,6 +51,7 @@ def _scan_for_kickoff(
     expected_half: str | None,
     start_seconds: float = 0.0,
     max_seconds: float = 900.0,
+    camera_profile: CameraProfile | None = None,
 ) -> float | None:
     """Scan up to ~15 minutes for the first low scoreboard clock.
 
@@ -67,7 +76,7 @@ def _scan_for_kickoff(
         while t < end_seconds:
             ok, frame, _ = read_frame_at_seconds(cap, t)
             if ok and frame is not None:
-                text = read_scoreboard_text(frame)
+                text = read_scoreboard_text(frame, camera_profile)
                 clock = parse_clock(text)
                 half = parse_half(text)
                 if clock is not None and clock <= 8 and (
@@ -84,7 +93,7 @@ def _scan_for_kickoff(
                     while rt < refine_end:
                         ok_r, frame_r, _ = read_frame_at_seconds(cap, rt)
                         if ok_r and frame_r is not None:
-                            text_r = read_scoreboard_text(frame_r)
+                            text_r = read_scoreboard_text(frame_r, camera_profile)
                             clock_r = parse_clock(text_r)
                             half_r = parse_half(text_r)
                             if clock_r is not None and clock_r <= 8 and (
@@ -111,6 +120,7 @@ def _detect_second_half_single(
     path: str | Path,
     first_half_seconds: float,
     duration_seconds: float,
+    camera_profile: CameraProfile | None = None,
 ) -> float | None:
     """Find a 2T reset in a complete-match recording."""
     if duration_seconds < 40 * 60:
@@ -125,7 +135,7 @@ def _detect_second_half_single(
         while t < duration_seconds:
             ok, frame, _ = read_frame_at_seconds(cap, t)
             if ok and frame is not None:
-                text = read_scoreboard_text(frame)
+                text = read_scoreboard_text(frame, camera_profile)
                 clock = parse_clock(text)
                 half = parse_half(text)
                 if clock is not None and clock >= 40 * 60:
@@ -153,10 +163,36 @@ def _detect_second_half_single(
     return None
 
 
+def apply_kickoff_overrides(
+    kickoff: Kickoff,
+    *,
+    kickoff_offset_sec: float | None = None,
+    second_half_start_sec: float | None = None,
+) -> Kickoff:
+    """Replace detected kickoffs when the operator supplies video-second offsets."""
+    updates: dict[str, float | str] = {}
+    notes: list[str] = []
+    if kickoff_offset_sec is not None:
+        updates["first_half_video_seconds"] = float(kickoff_offset_sec)
+        notes.append("kickoff_offset_sec")
+    if second_half_start_sec is not None:
+        updates["second_half_start_sec"] = float(second_half_start_sec)
+        notes.append("second_half_start_sec")
+    if not updates:
+        return kickoff
+    # second_half_start_sec maps to Kickoff.second_half_video_seconds
+    mapped = dict(updates)
+    if "second_half_start_sec" in mapped:
+        mapped["second_half_video_seconds"] = mapped.pop("second_half_start_sec")
+    mapped["note"] = f"{kickoff.note}; overrides: {', '.join(notes)}"
+    return kickoff.model_copy(update=mapped)
+
+
 def detect_kickoffs(
     video_paths: list[str | Path],
     mode: str,
     duration_mode: str = "full",
+    camera_profile: CameraProfile | None = None,
 ) -> Kickoff:
     """Detect kickoff positions for single or split uploads.
 
@@ -170,9 +206,13 @@ def detect_kickoffs(
     need_second_half = duration_mode == "full"
 
     if mode == "split" and len(video_paths) >= 2:
-        first = _scan_for_kickoff(video_paths[0], expected_half="1T")
+        first = _scan_for_kickoff(
+            video_paths[0], expected_half="1T", camera_profile=camera_profile
+        )
         second = (
-            _scan_for_kickoff(video_paths[1], expected_half="2T")
+            _scan_for_kickoff(
+                video_paths[1], expected_half="2T", camera_profile=camera_profile
+            )
             if need_second_half
             else None
         )
@@ -195,7 +235,9 @@ def detect_kickoffs(
         )
 
     path = video_paths[0]
-    first = _scan_for_kickoff(path, expected_half="1T")
+    first = _scan_for_kickoff(
+        path, expected_half="1T", camera_profile=camera_profile
+    )
     first_value = first if first is not None else 0.0
     second = None
     try:
@@ -203,7 +245,9 @@ def detect_kickoffs(
     except ValueError:
         duration = 0.0
     if need_second_half and first is not None:
-        second = _detect_second_half_single(path, first, duration)
+        second = _detect_second_half_single(
+            path, first, duration, camera_profile=camera_profile
+        )
 
     if first is None and second is None:
         note = "fallback t=0"

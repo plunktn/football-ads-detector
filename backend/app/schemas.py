@@ -1,6 +1,10 @@
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .config.stadiums import DEFAULT_STADIUM_ID
+from .domain.stadium import CameraProfile
 
 
 JobStatus = Literal[
@@ -11,13 +15,45 @@ JobStatus = Literal[
     "error",
 ]
 JobMode = Literal["single", "split"]
-DurationMode = Literal["5min", "10min", "full"]
+AnalysisMode = Literal["discovery", "playlist_verify"]
+# "full" or "{N}min" (1–180), e.g. "5min", "16min", "22min".
+DurationMode = str
+
+_DURATION_MIN_RE = re.compile(r"^(\d+)min$")
+_MAX_CUSTOM_MINUTES = 180
+
+
+def parse_duration_seconds(duration_mode: str) -> float | None:
+    """Return window length in seconds, or None for full-match mode."""
+    if duration_mode == "full":
+        return None
+    match = _DURATION_MIN_RE.fullmatch(duration_mode.strip())
+    if not match:
+        raise ValueError(
+            "duration_mode debe ser 'full' o '{N}min' (ej. 5min, 16min, 22min)."
+        )
+    minutes = int(match.group(1))
+    if minutes < 1 or minutes > _MAX_CUSTOM_MINUTES:
+        raise ValueError(
+            f"Los minutos deben estar entre 1 y {_MAX_CUSTOM_MINUTES}."
+        )
+    return float(minutes * 60)
+
+
+def normalize_duration_mode(duration_mode: str) -> str:
+    """Validate and normalize a duration_mode string."""
+    value = duration_mode.strip()
+    if value == "full":
+        return value
+    parse_duration_seconds(value)  # raises if invalid
+    return value
 
 
 class BrandInput(BaseModel):
     id: str | None = None
     name: str = Field(min_length=1)
     aliases: list[str] = Field(default_factory=list)
+    logo_path: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -32,6 +68,33 @@ class JobConfig(BaseModel):
     mode: JobMode
     duration_mode: DurationMode
     sample_fps: int = 1
+    stadium_id: str | None = None
+    analysis_mode: AnalysisMode = "discovery"
+    kickoff_offset_sec: float | None = None
+    second_half_start_sec: float | None = None
+
+    @field_validator("duration_mode")
+    @classmethod
+    def validate_duration_mode(cls, value: str) -> str:
+        return normalize_duration_mode(value)
+
+    @model_validator(mode="after")
+    def default_stadium_id(self) -> "JobConfig":
+        if self.stadium_id is None:
+            self.stadium_id = DEFAULT_STADIUM_ID
+        return self
+
+
+class StadiumSummary(BaseModel):
+    id: str
+    nombre: str
+
+
+class BrandSummary(BaseModel):
+    id: str
+    nombre: str
+    aliases: list[str] = Field(default_factory=list)
+    has_logo: bool = False
 
 
 class Kickoff(BaseModel):
@@ -49,6 +112,9 @@ class SegmentResult(BaseModel):
     start_frame: int
     end_frame: int
     duration_seconds: int
+    zone_id: str | None = None
+    posicion: str | None = None
+    tipo_panel: str | None = None
 
 
 class BrandResult(BaseModel):
@@ -60,11 +126,45 @@ class BrandResult(BaseModel):
     seconds: int = 0
     start_frames: list[int] = Field(default_factory=list)
     segments: list[SegmentResult] = Field(default_factory=list)
+    panel_kind: Literal["LED", "FIJA", "AMBAS"] | None = None
+    count_1t: int = 0
+    count_2t: int = 0
+
+
+class ComplianceRow(BaseModel):
+    brand: str
+    period: str
+    scheduled_start_sec: float
+    duration_sec: float
+    hit: bool
+    observed_video_sec: float | None = None
+    capture_path: str | None = None
+    source: str | None = None
 
 
 class JobResult(BaseModel):
     analyzed_seconds: int = 0
     brands: list[BrandResult] = Field(default_factory=list)
+    fixed_brands: list[BrandResult] = Field(default_factory=list)
+    analysis_mode: AnalysisMode = "discovery"
+    compliance: list[ComplianceRow] = Field(default_factory=list)
+    hit_rate: float | None = None
+    report_xlsx_path: str | None = None
+
+
+class JobSummaryTotals(BaseModel):
+    brand_count: int = 0
+    total_exposure_seconds: int = 0
+    analyzed_seconds: int = 0
+
+
+class JobSummary(BaseModel):
+    id: str
+    status: JobStatus
+    progress: float = 0.0
+    stadium_id: str | None = None
+    created_at: str
+    summary: JobSummaryTotals = Field(default_factory=JobSummaryTotals)
 
 
 class JobResponse(BaseModel):
@@ -76,6 +176,51 @@ class JobResponse(BaseModel):
     config: JobConfig
     kickoff: Kickoff | None = None
     result: JobResult | None = None
+    created_at: str | None = None
+
+
+class CalibrationPreviews(BaseModel):
+    scoreboard_jpeg_b64: str | None = None
+    grass_mask_jpeg_b64: str | None = None
+
+
+class CalibrationProposeResponse(BaseModel):
+    camera: CameraProfile
+    previews: CalibrationPreviews = Field(default_factory=CalibrationPreviews)
+
+
+class CalibrationSaveRequest(BaseModel):
+    stadium_id: str = Field(min_length=1)
+    nombre: str = Field(min_length=1)
+    pais: str | None = None
+    default_camera: str = "default"
+    camera: CameraProfile
+
+    @field_validator("stadium_id", "nombre")
+    @classmethod
+    def strip_required(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("El campo no puede estar vacío.")
+        return value
+
+    @field_validator("pais")
+    @classmethod
+    def strip_pais(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class CalibrationSaveResponse(BaseModel):
+    id: str
+    nombre: str
+    pais: str | None = None
+    profile_id: str
+    version: int
+    yaml_path: str | None = None
+    camera: CameraProfile
 
 
 class JobEvent(BaseModel):
