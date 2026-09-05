@@ -8,6 +8,7 @@ Proyecto creado en workspace **Plunkton's Projects** (separado de `plunkton-crm`
 | --- | --- |
 | Proyecto | `football-ads-detector` |
 | API | https://football-ads-detector-production.up.railway.app |
+| UI | https://football-ads-detector.pages.dev |
 | Volume | `/app/data` (5 GB) |
 | Dashboard | https://railway.com/project/914e459c-8d72-471b-84c7-e111163e996d |
 
@@ -19,7 +20,7 @@ Proyecto creado en workspace **Plunkton's Projects** (separado de `plunkton-crm`
 | Variable | Valor |
 | --- | --- |
 | `KEEP_JOB_VIDEOS` | `false` (default; libera disco tras cada job) |
-| `CORS_ORIGINS` | URL del front en Cloudflare, ej. `https://football-ads.pages.dev` |
+| `CORS_ORIGINS` | `https://football-ads-detector.pages.dev` |
 
 6. Plan con **≥ 2 GB RAM** recomendado (OpenCV + OCR).
 7. Dominio público Railway → copiar URL para el front.
