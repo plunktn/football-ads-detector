@@ -1,0 +1,16 @@
+.git
+.run
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+frontend/.next
+data/jobs
+data/app.db
+backend/:memory:.ses
+*.mp4
+*.mov
+*.mkv
+*.webm
+.DS_Store

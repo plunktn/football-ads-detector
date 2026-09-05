@@ -209,6 +209,7 @@ def run_analysis(
                                 zone_id=zone.id,
                                 posicion=zone.posicion,
                                 tipo_panel=zone.tipo_panel,
+                                shot=shot,
                             )
                         )
                         continue
@@ -217,25 +218,33 @@ def run_analysis(
                     ocr_hits = read_led_hits(roi.crop_bgr)
                     raw_text = " ".join(hit.text for hit in ocr_hits)
                     min_repeats = 1 if zone.tipo_panel == "FIXED_PRINT" else 2
-                    detected = frozenset(
-                        match_brand_ids(
+                    strong = match_brand_ids(
+                        raw_text,
+                        prepared,
+                        ocr_hits,
+                        min_repeats=min_repeats,
+                    ) | match_fixed_brand_ids(roi.crop_bgr, list(brands))
+                    weak: set[str] = set()
+                    if zone.tipo_panel != "FIXED_PRINT":
+                        weak = match_brand_ids(
                             raw_text,
                             prepared,
                             ocr_hits,
-                            min_repeats=min_repeats,
+                            min_repeats=1,
                         )
-                        | match_fixed_brand_ids(roi.crop_bgr, list(brands))
-                    )
+                        weak -= strong
                     frame_observations.append(
                         FrameObservation(
                             half=window.half,
                             time_seconds=t,
                             frame_idx=frame_idx,
-                            detected_brand_ids=detected,
+                            detected_brand_ids=frozenset(strong),
                             skipped=False,
                             zone_id=zone.id,
                             posicion=zone.posicion,
                             tipo_panel=zone.tipo_panel,
+                            shot=shot,
+                            ambiguous_brand_ids=frozenset(weak),
                         )
                     )
                 if not frame_observations:
@@ -246,6 +255,7 @@ def run_analysis(
                             frame_idx=frame_idx,
                             detected_brand_ids=frozenset(),
                             skipped=True,
+                            shot=shot,
                         )
                     )
 
@@ -294,15 +304,33 @@ def run_analysis(
     if analysis_mode == "playlist_verify" and playlist_slots:
         verify_slots = slots_for_verify(playlist_slots)
         video_by_half = {window.half: window.path for window in windows}
+        duration_by_half: dict[str, float] = {}
+        for window in windows:
+            try:
+                duration_by_half[window.half] = get_video_info(
+                    window.path
+                ).duration_seconds
+            except ValueError:
+                pass
         for slot in verify_slots:
             brand_id = _brand_id_for(slot, brands) or ""
-            result = verify_slot_from_observations(
-                slot, observations, kickoff, brand_id
+            path = video_by_half.get(slot.period) or (
+                video_paths[0] if video_paths else None
             )
-            if not result.hit:
-                path = video_by_half.get(slot.period) or (
-                    video_paths[0] if video_paths else None
-                )
+            duration = duration_by_half.get(slot.period)
+            if duration is None and path is not None:
+                try:
+                    duration = get_video_info(path).duration_seconds
+                except ValueError:
+                    duration = None
+            result = verify_slot_from_observations(
+                slot,
+                observations,
+                kickoff,
+                brand_id,
+                video_duration_sec=duration,
+            )
+            if result.status.value not in {"HIT", "PAST_EOF"}:
                 if path is not None:
                     result = verify_slot_in_video(
                         path,
@@ -311,6 +339,7 @@ def run_analysis(
                         brands,
                         camera_profile=camera_profile,
                         debug_dir=Path(debug_dir) / "verify",
+                        video_duration_sec=duration,
                     )
             compliance.append(to_compliance_row(result))
         rate = compliance_hit_rate(compliance)

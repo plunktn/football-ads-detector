@@ -11,6 +11,7 @@ from .domain.stadium import CameraProfile
 from .pipeline.brands import generate_aliases
 from .pipeline.playlist import parse_playlist
 from .pipeline.report import write_commercial_report
+from .job_storage import maybe_purge_job_media
 from .pipeline.run import AnalysisUpdate, run_analysis
 from .pipeline.scoreboard import apply_kickoff_overrides, detect_kickoffs
 from .schemas import (
@@ -461,6 +462,12 @@ class JobManager:
                 kickoff_json=kickoff_json,
                 result_json=result_json,
             )
+            await asyncio.to_thread(
+                maybe_purge_job_media,
+                record.directory,
+                list(record.video_paths),
+            )
+            record.video_paths = []
             await self._publish(
                 record,
                 status="completed",

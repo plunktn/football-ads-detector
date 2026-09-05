@@ -1,0 +1,26 @@
+[
+  {
+    "clip": "sample_clip.mp4",
+    "marca": "NETT plus",
+    "brand_id": "nettplus",
+    "zone": "led_lateral_main",
+    "start_s": 205.0,
+    "end_s": 221.0
+  },
+  {
+    "clip": "sample_clip.mp4",
+    "marca": "Lions Sports & Media",
+    "brand_id": "lions",
+    "zone": "led_lateral_main",
+    "start_s": 207.0,
+    "end_s": 230.0
+  },
+  {
+    "clip": "sample_clip.mp4",
+    "marca": "ECUABET",
+    "brand_id": "ecuabet",
+    "zone": "led_lateral_main",
+    "start_s": 240.0,
+    "end_s": 280.0
+  }
+]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..schemas import BrandResult, SegmentResult
 from .hysteresis import apply_hysteresis
@@ -19,6 +19,8 @@ class FrameObservation:
     zone_id: str | None = None
     posicion: str | None = None
     tipo_panel: str | None = None
+    shot: object | None = None
+    ambiguous_brand_ids: frozenset[str] = field(default_factory=frozenset)
 
 
 def _clock(seconds: float) -> str:

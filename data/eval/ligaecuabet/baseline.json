@@ -1,0 +1,39 @@
+{
+  "brands": {
+    "ECUABET": {
+      "error_s": 40.0,
+      "gt_seconds": 40.0,
+      "precision": 0.0,
+      "predicted_seconds": 0.0,
+      "recall": 0.0,
+      "true_positive_seconds": 0.0
+    },
+    "Lions Sports & Media": {
+      "error_s": 23.0,
+      "gt_seconds": 23.0,
+      "precision": 0.0,
+      "predicted_seconds": 0.0,
+      "recall": 0.0,
+      "true_positive_seconds": 0.0
+    },
+    "NETT plus": {
+      "error_s": 16.0,
+      "gt_seconds": 16.0,
+      "precision": 0.0,
+      "predicted_seconds": 0.0,
+      "recall": 0.0,
+      "true_positive_seconds": 0.0
+    }
+  },
+  "clips_evaluated": [],
+  "clips_missing": [
+    "sample_clip.mp4"
+  ],
+  "clips_skipped": [
+    "sample_clip.mp4"
+  ],
+  "synthetic": false,
+  "warnings": [
+    "No video clips found; writing all-zero baseline from ground truth only."
+  ]
+}

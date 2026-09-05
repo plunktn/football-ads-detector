@@ -17,9 +17,14 @@ from ..roi import (
 
 
 class ShotKind(StrEnum):
+    WIDE_LED = "WIDE_LED"
+    # Legacy alias kept for callers/tests that still say LATERAL.
     LATERAL = "LATERAL"
+    CLOSEUP = "CLOSEUP"
     WIDE = "WIDE"
     BEHIND_GOAL = "BEHIND_GOAL"
+    GRAPHIC_BUMPER = "GRAPHIC_BUMPER"
+    # Legacy alias for GRAPHIC_BUMPER.
     REPLAY_OR_GRAPHIC = "REPLAY_OR_GRAPHIC"
     UNKNOWN = "UNKNOWN"
 
@@ -44,27 +49,37 @@ def classify_shot(
         # Studio/replay graphics have almost no turf; a faint grass hint
         # (close-up, tunnel, mixed overlay) stays UNKNOWN.
         if grass_ratio < params.grass_min_ratio * 0.5:
-            return ShotKind.REPLAY_OR_GRAPHIC
+            return ShotKind.GRAPHIC_BUMPER
         return ShotKind.UNKNOWN
 
     y_grass = _touchline_ys(mask, profile, params=params)
+    bands = _find_color_bands(
+        frame,
+        y_min=int(height * params.led_band_y_top_frac),
+        y_max=int(height * 0.90),
+        profile=profile,
+        params=params,
+    )
+    led = None
+    if y_grass is not None:
+        led = _pick_led_band(
+            bands,
+            y_grass=y_grass,
+            frame_h=height,
+            profile=profile,
+            params=params,
+        )
+
     if y_grass is not None:
         median_line = float(np.median(y_grass))
         if median_line < height / 3.0:
-            bands = _find_color_bands(
-                frame,
-                y_min=int(height * params.led_band_y_top_frac),
-                y_max=int(height * 0.90),
-                profile=profile,
-                params=params,
-            )
-            if _pick_led_band(
-                bands,
-                y_grass=y_grass,
-                frame_h=height,
-                profile=profile,
-                params=params,
-            ) is None:
+            if led is None:
                 return ShotKind.WIDE
+            return ShotKind.WIDE_LED
 
-    return ShotKind.LATERAL
+        # Grass present, touchline mid/lower third, no emissive LED band
+        # → close-up / player detail without usable perimeter advertising.
+        if led is None:
+            return ShotKind.CLOSEUP
+
+    return ShotKind.WIDE_LED

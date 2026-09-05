@@ -5,6 +5,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 data/jobs/
+data/app.db
+backend/:memory:.ses
 .run/
 .env
 *.mp4

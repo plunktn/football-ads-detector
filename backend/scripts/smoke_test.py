@@ -21,7 +21,9 @@ from app.pipeline.playlist import parse_playlist, write_lions_workbook
 from app.pipeline.report import write_commercial_report
 from app.pipeline.roi import RoiResult
 from app.pipeline.run import run_analysis
+from app.pipeline.stages import ShotKind
 from app.schemas import BrandInput, Kickoff
+from openpyxl import load_workbook
 
 
 def _tiny_video(path: Path, duration_seconds: int = 40) -> Path:
@@ -74,7 +76,11 @@ def main() -> int:
              "app.pipeline.run.match_brand_ids",
              return_value={"netplus", "ecuabet"},
          ), \
-         patch("app.pipeline.run.match_fixed_brand_ids", return_value=set()):
+         patch("app.pipeline.run.match_fixed_brand_ids", return_value=set()), \
+         patch(
+             "app.pipeline.run.classify_shot",
+             return_value=ShotKind.WIDE_LED,
+         ):
         result = run_analysis(
             [video],
             mode="single",
@@ -107,6 +113,12 @@ def main() -> int:
     )
     if not report.is_file():
         print("SMOKE FAIL missing xlsx")
+        return 1
+
+    wb = load_workbook(report)
+    expected = ["Resumen", "Salidas", "Cumplimiento", "Dudosas", "Extras"]
+    if wb.sheetnames != expected:
+        print(f"SMOKE FAIL sheets={wb.sheetnames}")
         return 1
 
     print("SMOKE OK")

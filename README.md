@@ -1,13 +1,14 @@
 # Football Ads Detector
 
 Herramienta local para medir la exposición de marcas en las vallas LED
-laterales de un partido de fútbol. Subí un partido completo o los dos
-tiempos, cargá la lista de marcas y recibí apariciones, tiempo total y frames
+laterales de un partido de fútbol. Sube un partido completo o los dos
+tiempos, carga la lista de marcas y recibe apariciones, tiempo total y frames
 de inicio.
 
 El sistema detecta el césped, toma la franja luminosa inmediatamente encima
 de su borde y aplica OCR únicamente allí; las lonas fijas de arriba y los
-fondos de arco quedan fuera del análisis.
+fondos de arco quedan fuera del análisis LED (en discovery también se
+reportan fijas por separado).
 
 ## Requisitos
 
@@ -34,44 +35,82 @@ npm install
 npm run dev
 ```
 
-Abrí http://127.0.0.1:43123. La API queda disponible en
+Abre http://127.0.0.1:43123. La API queda disponible en
 http://127.0.0.1:43124 y responde `{ "ok": true }` en `/health`.
 
-Si necesitás otra dirección para la API, definí:
+Si necesitas otra dirección para la API, define:
 
 ```bash
 NEXT_PUBLIC_API_URL=http://127.0.0.1:43124
 ```
 
-## Uso
+## Uso: discovery vs playlist_verify
 
-1. Elegí un video completo o cargá 1T y 2T.
-2. Agregá al menos una marca **o** subí una playlist Lions (xlsx). El logo es opcional.
-3. Elegí 5 minutos, 10 minutos o partido entero.
-4. Presioná **Analizar vallas LED** y seguí el progreso por SSE.
+### Discovery (default)
 
-### Playlist opcional + discovery
+1. Video full o 1T+2T.
+2. Lista de marcas (nombres / aliases / logos opcionales).
+3. Ventana 5min / 10min / custom / partido entero.
+4. **Analizar** → exposición LED + fijas + CSV. Sin playlist.
 
-- **Discovery** (default): scan a 1 fps sin playlist. Sale exposición LED, lonas fijas y CSV.
-- **Playlist verify**: checkbox + xlsx multi-hoja (`PREVIA` / `PRIMER TIEMPO` / `ENTRETIEMPO` / `SEGUNDO TIEMPO` / `POST`) con columnas `CLIENTE`, `MINUTO` (`0.15` = 0:15), `DURACIÓN`.
-  El job verifica cada pauta 1T/2T en la ventana, clasifica LED vs FIJA vs AMBAS (ignora overlays de TV) y genera un Excel (`Resumen`, `Salidas detectadas`, `Playlist 1T`, `Playlist 2T`, `Cumplimiento`, `Fijas`).
+### Playlist verify (auditoría de reporte Lions)
 
-En video FULL se puede forzar el saque con `kickoff_offset_sec` y `second_half_start_sec`; si no, se lee el reloj LigaEcuabet.
+1. Marca **Verificar playlist/reporte** y sube el xlsx multi-hoja
+   (`PREVIA` / `PRIMER TIEMPO` / `ENTRETIEMPO` / `SEGUNDO TIEMPO` / `POST`)
+   con columnas `CLIENTE`, `MINUTO` (`0.15` = 0:15), `DURACIÓN` (default 15s).
+2. Opcional: override de **offset kickoff 1T** e **inicio 2T** en segundos de
+   archivo (vacío = detección por marcador).
+3. El job fuerza ventana `full` y verifica cada pauta 1T/2T.
+4. Excel: `Resumen` | `Salidas` | `Cumplimiento` | `Dudosas` | `Extras`.
 
-El análisis busca el saque inicial en el marcador superior izquierdo y usa
-`t=0` como fallback cuando no puede leerlo. Los crops y overlays de depuración
-se guardan en `data/jobs/{id}/debug/`; el resultado final queda en
-`result.json` y `informe.xlsx`.
+`hit_rate` = `HIT / (HIT + MISS)`. Los estados dudosos y `PAST_EOF` **no**
+entran al denominador.
+
+| Status | Significado |
+| --- | --- |
+| HIT | Marca clara en ventana (Δ ≤ 20s) |
+| MISS | Plano LED usable y la marca no aparece |
+| NO_EVIDENCE | Close-up / bumper / wide sin banda LED |
+| AMBIGUOUS | OCR/logo flojo; revisar captura |
+| OFFSET | Marca vista fuera de ±20s (±60s vecinos) |
+| PAST_EOF | Minuto mapeado más allá de la duración del archivo |
+
+Overlays de TV (Zapping, xtrim, SHOWTIME, etc.) no cuentan.
+
+### Checklist primera corrida real
+
+1. Video full match (o 1T+2T split) + playlist Lions xlsx.
+2. Si el kickoff auto falla, fija offsets (ej. TU vs Cuenca / Lib vs Ore:
+   kickoff ~282s, 2T ~3521s).
+3. Corre `playlist_verify` y abre `informe.xlsx`.
+4. Revisa hoja **Dudosas** antes de tratar un MISS como incumplimiento.
+5. OCR flojo → preferir `AMBIGUOUS` + captura; no inventar métricas.
+6. Discovery sin playlist debe seguir funcionando igual (smoke de UI).
+
+Crops de depuración en `data/jobs/{id}/debug/`; resultado en
+`result.json` e `informe.xlsx`.
 
 ## Limitaciones v1
 
-- Muestreo de análisis a 1 FPS, aunque el MP4 tenga 30/60 FPS.
-- Procesamiento local en CPU; paneos fuertes, blur o tipografías pequeñas
-  pueden hacer fallar el OCR.
-- Fondos de arco y overlays virtuales de broadcast no se inventarian; se ignoran
-  gráficos de TV (Zapping, xtrim, SHOWTIME).
-- No se entrenan modelos custom. Discovery no inventa marcas fuera del catálogo
-  o de la playlist.
+- Muestreo de análisis a 1 FPS (P1: 0.5s en ventanas verify).
+- Procesamiento local en CPU; paneos, blur o tipografías pequeñas pueden
+  fallar el OCR.
+- Fondos de arco y overlays virtuales de broadcast no se inventarian.
+- Discovery no inventa marcas fuera del catálogo o de la playlist.
+
+## Almacenamiento de jobs
+
+Por defecto, al terminar un análisis exitoso se borran el video subido y la
+carpeta `debug/` del job. Se conservan `result.json`, `informe.xlsx` y
+metadatos (pocos MB por corrida).
+
+Para conservar videos en local (p. ej. revisar frames después):
+
+```bash
+export KEEP_JOB_VIDEOS=true
+```
+
+En Railway no hace falta definir la variable: el default ya libera disco.
 
 ## Verificación
 

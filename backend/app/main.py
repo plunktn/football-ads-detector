@@ -26,6 +26,7 @@ from .pipeline.calibrate import load_sample_frame, persist_stadium, propose_from
 from .pipeline.brands import brands_from_names
 from .pipeline.playlist import parse_playlist, unique_brands
 from .pipeline.video import get_video_info
+from .settings import cors_origins
 from .schemas import (
     BrandInput,
     BrandSummary,
@@ -63,10 +64,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:43123",
-        "http://localhost:43123",
-    ],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

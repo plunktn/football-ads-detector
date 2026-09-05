@@ -11,7 +11,14 @@ from ...domain.zones import DEFAULT_PANEL_ZONES, PanelZone
 from ..roi import RoiResult, extract_fixed_banner_roi, extract_led_roi
 from .shot_class import ShotKind
 
-_SKIP_SHOTS = {ShotKind.WIDE, ShotKind.REPLAY_OR_GRAPHIC, ShotKind.UNKNOWN}
+_USABLE_SHOTS = {ShotKind.WIDE_LED, ShotKind.LATERAL}
+_SKIP_SHOTS = {
+    ShotKind.WIDE,
+    ShotKind.CLOSEUP,
+    ShotKind.GRAPHIC_BUMPER,
+    ShotKind.REPLAY_OR_GRAPHIC,
+    ShotKind.UNKNOWN,
+}
 _OVERLAY_POSITIONS = {"SCOREBOARD_OVERLAY"}
 _OVERLAY_TYPES = {"VIRTUAL_OVERLAY"}
 
@@ -29,12 +36,12 @@ def locate_zones(
 ) -> list[tuple[PanelZone, RoiResult]]:
     """Return (zone, ROI) pairs that should be OCR'd for this shot.
 
-    Replay/graphic and empty-WIDE frames skip localization. TV overlays
-    (scoreboard, virtual banners) are never returned.
+    Replay/graphic, close-up and empty-WIDE frames skip localization. TV
+    overlays (scoreboard, virtual banners) are never returned.
     """
     if shot in _SKIP_SHOTS:
         return []
-    if shot != ShotKind.LATERAL:
+    if shot not in _USABLE_SHOTS:
         return []
 
     led_roi: RoiResult | None = None

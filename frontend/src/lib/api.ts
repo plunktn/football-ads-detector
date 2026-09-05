@@ -13,6 +13,20 @@ export type AnalysisMode = "discovery" | "playlist_verify";
 /** "full" or "{N}min" e.g. "5min", "16min", "22min" */
 export type DurationMode = string;
 
+export type VerificationStatus =
+  | "HIT"
+  | "MISS"
+  | "NO_EVIDENCE"
+  | "AMBIGUOUS"
+  | "OFFSET"
+  | "PAST_EOF";
+
+export const DOUBTFUL_STATUSES: VerificationStatus[] = [
+  "NO_EVIDENCE",
+  "AMBIGUOUS",
+  "OFFSET",
+];
+
 export type Brand = {
   id: string;
   name: string;
@@ -83,10 +97,14 @@ export type ComplianceRow = {
   period: string;
   scheduled_start_sec: number;
   duration_sec: number;
+  status: VerificationStatus;
   hit: boolean;
+  delta_sec?: number | null;
+  reason?: string | null;
   observed_video_sec?: number | null;
   capture_path?: string | null;
   source?: string | null;
+  zone?: string | null;
 };
 
 export type JobSummary = {
@@ -280,6 +298,8 @@ type SubmitJobInput = {
   videoSecond?: File;
   playlist?: File;
   analysisMode?: AnalysisMode;
+  kickoffOffsetSec?: number | null;
+  secondHalfStartSec?: number | null;
 };
 
 export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> {
@@ -304,6 +324,18 @@ export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> 
   }
   if (input.playlist) {
     form.append("playlist", input.playlist);
+  }
+  if (
+    input.kickoffOffsetSec != null &&
+    Number.isFinite(input.kickoffOffsetSec)
+  ) {
+    form.append("kickoff_offset_sec", String(input.kickoffOffsetSec));
+  }
+  if (
+    input.secondHalfStartSec != null &&
+    Number.isFinite(input.secondHalfStartSec)
+  ) {
+    form.append("second_half_start_sec", String(input.secondHalfStartSec));
   }
   for (const brand of input.brands) {
     if (brand.logo) {

@@ -29,16 +29,20 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   type Brand,
   type BrandResult,
+  type ComplianceRow,
   type DurationMode,
   type Job,
   type JobMode,
   type JobSummary,
   type SavedBrand,
   type Stadium,
+  type VerificationStatus,
+  DOUBTFUL_STATUSES,
   exportCsvUrl,
   exportXlsxUrl,
   getActiveJob,
@@ -231,6 +235,116 @@ function FileDropzone({
   );
 }
 
+function formatMinuto(startSec: number) {
+  const minute = Math.floor(startSec / 60);
+  const second = Math.floor(startSec % 60);
+  return `${minute}.${String(second).padStart(2, "0")}`;
+}
+
+function statusBadgeVariant(
+  status: VerificationStatus,
+): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "HIT") return "default";
+  if (status === "MISS") return "destructive";
+  if (status === "PAST_EOF") return "outline";
+  return "secondary";
+}
+
+function ComplianceTable({ rows }: { rows: ComplianceRow[] }) {
+  const [onlyDoubtful, setOnlyDoubtful] = useState(false);
+  const filtered = onlyDoubtful
+    ? rows.filter((row) =>
+        DOUBTFUL_STATUSES.includes(row.status ?? (row.hit ? "HIT" : "MISS")),
+      )
+    : rows;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+            Cumplimiento playlist
+          </p>
+          <h3 className="mt-1 text-lg font-semibold">Auditoría de salidas</h3>
+        </div>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="size-4 accent-primary"
+            checked={onlyDoubtful}
+            onChange={(event) => setOnlyDoubtful(event.target.checked)}
+          />
+          Solo dudosas
+        </label>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-border/80">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-180 text-left text-sm">
+            <thead className="bg-muted/40 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Marca</th>
+                <th className="px-3 py-2 font-medium">Periodo</th>
+                <th className="px-3 py-2 font-medium">Minuto</th>
+                <th className="px-3 py-2 font-medium">Status</th>
+                <th className="px-3 py-2 font-medium">Δ s</th>
+                <th className="px-3 py-2 font-medium">Captura</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-3 py-6 text-center text-xs text-muted-foreground"
+                  >
+                    {onlyDoubtful
+                      ? "No hay filas dudosas."
+                      : "Sin filas de cumplimiento."}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((row, index) => {
+                  const status =
+                    row.status ?? (row.hit ? "HIT" : ("MISS" as VerificationStatus));
+                  const captureName = row.capture_path
+                    ? row.capture_path.split(/[/\\]/).pop()
+                    : null;
+                  return (
+                    <tr
+                      key={`${row.brand}-${row.period}-${row.scheduled_start_sec}-${index}`}
+                      className="border-t border-border/60"
+                    >
+                      <td className="px-3 py-2 font-medium">{row.brand}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.period}</td>
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {formatMinuto(row.scheduled_start_sec)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge variant={statusBadgeVariant(status)} className="text-[10px]">
+                          {status}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {row.delta_sec == null ? "—" : row.delta_sec.toFixed(1)}
+                      </td>
+                      <td
+                        className="max-w-40 truncate px-3 py-2 font-mono text-[10px] text-muted-foreground"
+                        title={row.capture_path ?? row.reason ?? undefined}
+                      >
+                        {captureName ?? row.reason ?? "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ResultsTable({
   jobId,
   brands,
@@ -259,11 +373,16 @@ function ResultsTable({
 
   useEffect(() => {
     if (!selectedFrame) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedFrame(null);
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
   }, [selectedFrame]);
 
   return (
@@ -431,44 +550,47 @@ function ResultsTable({
           </table>
         </div>
       </div>
-      {selectedFrame && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Frame ampliado: ${selectedFrame.label}`}
-          onClick={() => setSelectedFrame(null)}
-        >
+      {selectedFrame &&
+        createPortal(
           <div
-            className="relative w-full max-w-5xl rounded-2xl border border-border bg-card p-3 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Frame ampliado: ${selectedFrame.label}`}
+            onClick={() => setSelectedFrame(null)}
           >
-            <div className="mb-3 flex items-center justify-between gap-4 px-1">
-              <p className="truncate font-mono text-xs text-muted-foreground">
-                {selectedFrame.label}
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-10 shrink-0"
-                onClick={() => setSelectedFrame(null)}
-                aria-label="Cerrar frame ampliado"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
+            <div
+              className="relative my-auto w-full max-w-5xl rounded-2xl border border-border bg-card p-3 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between gap-4 px-1">
+                <p className="truncate font-mono text-xs text-muted-foreground">
+                  {selectedFrame.label}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-10 shrink-0"
+                  onClick={() => setSelectedFrame(null)}
+                  aria-label="Cerrar frame ampliado"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+              <Image
+                src={selectedFrame.src}
+                alt={selectedFrame.label}
+                width={1280}
+                height={720}
+                unoptimized
+                className="h-auto max-h-[78vh] w-full rounded-xl object-contain"
+                style={{ width: "100%", height: "auto" }}
+              />
             </div>
-            <Image
-              src={selectedFrame.src}
-              alt={selectedFrame.label}
-              width={1280}
-              height={720}
-              unoptimized
-              className="max-h-[78vh] w-full rounded-xl object-contain"
-            />
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
@@ -716,6 +838,8 @@ export default function Home() {
   const [videoSecond, setVideoSecond] = useState<File>();
   const [usePlaylist, setUsePlaylist] = useState(false);
   const [playlist, setPlaylist] = useState<File>();
+  const [kickoffOffsetSec, setKickoffOffsetSec] = useState("");
+  const [secondHalfStartSec, setSecondHalfStartSec] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandName, setBrandName] = useState("");
   const [savedBrands, setSavedBrands] = useState<SavedBrand[]>([]);
@@ -897,16 +1021,34 @@ export default function Home() {
     setConnectionError(null);
     stopWatching.current?.();
     try {
+      const analysisMode =
+        usePlaylist && playlist ? "playlist_verify" : "discovery";
+      const effectiveDuration =
+        analysisMode === "playlist_verify" ? "full" : durationMode;
+      const kickoffParsed = kickoffOffsetSec.trim()
+        ? Number(kickoffOffsetSec)
+        : null;
+      const secondParsed = secondHalfStartSec.trim()
+        ? Number(secondHalfStartSec)
+        : null;
       const created = await submitJob({
         mode,
-        durationMode,
+        durationMode: effectiveDuration,
         stadiumId,
         brands,
         video,
         videoFirst,
         videoSecond,
         playlist: usePlaylist ? playlist : undefined,
-        analysisMode: usePlaylist && playlist ? "playlist_verify" : "discovery",
+        analysisMode,
+        kickoffOffsetSec:
+          kickoffParsed != null && Number.isFinite(kickoffParsed)
+            ? kickoffParsed
+            : null,
+        secondHalfStartSec:
+          secondParsed != null && Number.isFinite(secondParsed)
+            ? secondParsed
+            : null,
       });
       const initialJob: Job = {
         id: created.id,
@@ -914,7 +1056,20 @@ export default function Home() {
         progress: 0,
         progress_label: "En cola",
         error: null,
-        config: { mode, duration_mode: durationMode, sample_fps: 1 },
+        config: {
+          mode,
+          duration_mode: effectiveDuration,
+          sample_fps: 1,
+          analysis_mode: analysisMode,
+          kickoff_offset_sec:
+            kickoffParsed != null && Number.isFinite(kickoffParsed)
+              ? kickoffParsed
+              : null,
+          second_half_start_sec:
+            secondParsed != null && Number.isFinite(secondParsed)
+              ? secondParsed
+              : null,
+        },
         kickoff: null,
         result: null,
       };
@@ -1283,11 +1438,11 @@ export default function Home() {
               <section aria-labelledby="playlist-heading">
                 <div className="mb-3">
                   <h2 id="playlist-heading" className="text-sm font-semibold text-foreground">
-                    Playlist Lions (opcional)
+                    Playlist / reporte Lions
                   </h2>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Sin playlist el job hace discovery a 1 fps. Con Excel se verifica
-                    cada pauta 1T/2T y sale el informe comercial.
+                    cada pauta 1T/2T con estados HIT/MISS/dudosos y sale el informe.
                   </p>
                 </div>
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
@@ -1299,35 +1454,81 @@ export default function Home() {
                     onChange={(event) => {
                       setUsePlaylist(event.target.checked);
                       if (!event.target.checked) setPlaylist(undefined);
+                      if (event.target.checked) {
+                        setDurationPreset("full");
+                        setDurationMode("full");
+                      }
                     }}
                   />
                   <span>
                     <span className="font-medium text-foreground">
-                      Verificar playlist Lions
+                      Verificar playlist/reporte
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
-                      Subí el xlsx multi-hoja (PREVIA / 1T / ENTRETIEMPO / 2T / POST).
+                      Sube el xlsx multi-hoja (PREVIA / 1T / ENTRETIEMPO / 2T / POST).
+                      Con playlist se analiza el partido completo.
                     </span>
                   </span>
                 </label>
                 {usePlaylist ? (
-                  <div className="mt-3">
-                    <Label htmlFor="playlist-xlsx" className="sr-only">
-                      Archivo playlist
-                    </Label>
-                    <Input
-                      id="playlist-xlsx"
-                      type="file"
-                      accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                      disabled={Boolean(isBusy)}
-                      className="h-11 bg-background/60"
-                      onChange={(event) => setPlaylist(event.target.files?.[0])}
-                    />
-                    {playlist ? (
-                      <p className="mt-2 truncate text-xs text-muted-foreground">
-                        {playlist.name}
-                      </p>
-                    ) : null}
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <Label htmlFor="playlist-xlsx" className="sr-only">
+                        Archivo playlist
+                      </Label>
+                      <Input
+                        id="playlist-xlsx"
+                        type="file"
+                        accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        disabled={Boolean(isBusy)}
+                        className="h-11 bg-background/60"
+                        onChange={(event) => setPlaylist(event.target.files?.[0])}
+                      />
+                      {playlist ? (
+                        <p className="mt-2 truncate text-xs text-muted-foreground">
+                          {playlist.name}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="kickoff-offset" className="text-xs">
+                          Offset kickoff 1T (s de archivo)
+                        </Label>
+                        <Input
+                          id="kickoff-offset"
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          placeholder="Auto (marcador)"
+                          value={kickoffOffsetSec}
+                          disabled={Boolean(isBusy)}
+                          className="h-10 bg-background/60 font-mono"
+                          onChange={(event) => setKickoffOffsetSec(event.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="second-half-start" className="text-xs">
+                          Inicio 2T (s de archivo)
+                        </Label>
+                        <Input
+                          id="second-half-start"
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          placeholder="Auto (marcador)"
+                          value={secondHalfStartSec}
+                          disabled={Boolean(isBusy)}
+                          className="h-10 bg-background/60 font-mono"
+                          onChange={(event) =>
+                            setSecondHalfStartSec(event.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Vacío = detección automática. Ejemplo full match: 282 / 3521.
+                    </p>
                   </div>
                 ) : null}
               </section>
@@ -1688,52 +1889,57 @@ export default function Home() {
                 )}
 
                 {job?.status === "completed" && (
-                  <div>
-                    <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                      <div>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
-                          Reporte / marcas
-                        </p>
-                        <h3 className="mt-1 text-lg font-semibold">Exposición detectada</h3>
-                        {typeof job.result?.hit_rate === "number" ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Cumplimiento playlist:{" "}
-                            {Math.round(job.result.hit_rate * 100)}%
+                  <div className="space-y-8">
+                    {job.result?.compliance && job.result.compliance.length > 0 ? (
+                      <ComplianceTable rows={job.result.compliance} />
+                    ) : null}
+                    <div>
+                      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                        <div>
+                          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
+                            Reporte / marcas
                           </p>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <a
-                          href={exportCsvUrl(job.id)}
-                          download={`analisis-${job.id.slice(0, 8)}.csv`}
-                        >
-                          <Button type="button" variant="outline" className="gap-2">
-                            <Download className="size-4" aria-hidden="true" />
-                            Exportar CSV
-                          </Button>
-                        </a>
-                        {job.result?.report_xlsx_path || job.status === "completed" ? (
+                          <h3 className="mt-1 text-lg font-semibold">Exposición detectada</h3>
+                          {typeof job.result?.hit_rate === "number" ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Cumplimiento HIT/(HIT+MISS):{" "}
+                              {Math.round(job.result.hit_rate * 100)}%
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
                           <a
-                            href={exportXlsxUrl(job.id)}
-                            download={`informe-${job.id.slice(0, 8)}.xlsx`}
+                            href={exportCsvUrl(job.id)}
+                            download={`analisis-${job.id.slice(0, 8)}.csv`}
                           >
                             <Button type="button" variant="outline" className="gap-2">
                               <Download className="size-4" aria-hidden="true" />
-                              Informe Excel
+                              Exportar CSV
                             </Button>
                           </a>
-                        ) : null}
-                        <Badge variant="outline" className="gap-2 border-primary/25 text-primary">
-                          <Check className="size-3.5" aria-hidden="true" />
-                          Datos listos
-                        </Badge>
+                          {job.result?.report_xlsx_path || job.status === "completed" ? (
+                            <a
+                              href={exportXlsxUrl(job.id)}
+                              download={`informe-${job.id.slice(0, 8)}.xlsx`}
+                            >
+                              <Button type="button" variant="outline" className="gap-2">
+                                <Download className="size-4" aria-hidden="true" />
+                                Informe Excel
+                              </Button>
+                            </a>
+                          ) : null}
+                          <Badge variant="outline" className="gap-2 border-primary/25 text-primary">
+                            <Check className="size-3.5" aria-hidden="true" />
+                            Datos listos
+                          </Badge>
+                        </div>
                       </div>
+                      <ResultsTable
+                        jobId={job.id}
+                        brands={brands}
+                        resultBrands={resultBrands}
+                      />
                     </div>
-                    <ResultsTable
-                      jobId={job.id}
-                      brands={brands}
-                      resultBrands={resultBrands}
-                    />
                   </div>
                 )}
               </CardContent>

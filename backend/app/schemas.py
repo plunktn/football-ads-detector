@@ -1,4 +1,5 @@
 import re
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,6 +19,26 @@ JobMode = Literal["single", "split"]
 AnalysisMode = Literal["discovery", "playlist_verify"]
 # "full" or "{N}min" (1–180), e.g. "5min", "16min", "22min".
 DurationMode = str
+
+
+class VerificationStatus(StrEnum):
+    """Playlist-slot audit outcome. ``hit`` is derived: status == HIT."""
+
+    HIT = "HIT"
+    MISS = "MISS"
+    NO_EVIDENCE = "NO_EVIDENCE"
+    AMBIGUOUS = "AMBIGUOUS"
+    OFFSET = "OFFSET"
+    PAST_EOF = "PAST_EOF"
+
+
+DOUBTFUL_STATUSES = frozenset(
+    {
+        VerificationStatus.NO_EVIDENCE,
+        VerificationStatus.AMBIGUOUS,
+        VerificationStatus.OFFSET,
+    }
+)
 
 _DURATION_MIN_RE = re.compile(r"^(\d+)min$")
 _MAX_CUSTOM_MINUTES = 180
@@ -136,10 +157,19 @@ class ComplianceRow(BaseModel):
     period: str
     scheduled_start_sec: float
     duration_sec: float
-    hit: bool
+    status: VerificationStatus = VerificationStatus.MISS
+    hit: bool = False
+    delta_sec: float | None = None
+    reason: str | None = None
     observed_video_sec: float | None = None
     capture_path: str | None = None
     source: str | None = None
+    zone: str | None = None
+
+    @model_validator(mode="after")
+    def sync_hit_from_status(self) -> "ComplianceRow":
+        self.hit = self.status == VerificationStatus.HIT
+        return self
 
 
 class JobResult(BaseModel):
