@@ -2,11 +2,19 @@
 
 ## Backend en Railway
 
-1. Nuevo **service** en tu proyecto Railway (mismo workspace que Plunkton).
-2. Conectar repo `Roiner994/football-ads-detector`, branch `master`.
-3. Railway detecta `Dockerfile` + `railway.toml` en la raíz.
-4. **Volume** montado en `/app/data` (jobs + SQLite).
-5. Variables de entorno:
+Proyecto creado en workspace **Plunkton's Projects** (separado de `plunkton-crm` y `plunkton_agentic`).
+
+| | |
+| --- | --- |
+| Proyecto | `football-ads-detector` |
+| API | https://football-ads-detector-production.up.railway.app |
+| Volume | `/app/data` (5 GB) |
+| Dashboard | https://railway.com/project/914e459c-8d72-471b-84c7-e111163e996d |
+
+1. Service conectado al repo `plunktn/football-ads-detector`.
+2. `Dockerfile` + `railway.toml` en la raíz.
+3. **Volume** montado en `/app/data` (jobs + SQLite).
+4. Variables de entorno:
 
 | Variable | Valor |
 | --- | --- |
@@ -18,6 +26,14 @@
 
 Health check: `GET /health` → `{ "ok": true }`.
 
+## MCP de Railway (Cursor)
+
+El MCP `https://mcp.railway.com` es por **cuenta/workspace**, no por proyecto.
+Plunkton y football-ads-detector comparten el mismo OAuth de Railway.
+
+Este repo incluye `.cursor/mcp.json` con el mismo server que Plunkton.
+No hace falta un MCP distinto por proyecto.
+
 ## Frontend en Cloudflare Pages
 
 1. Conectar el mismo repo GitHub.
@@ -27,7 +43,7 @@ Health check: `GET /health` → `{ "ok": true }`.
 5. Variable de build:
 
 ```
-NEXT_PUBLIC_API_URL=https://<tu-api>.up.railway.app
+NEXT_PUBLIC_API_URL=https://football-ads-detector-production.up.railway.app
 ```
 
 6. Deploy. Abrir la URL de Pages y probar un job con video corto.
