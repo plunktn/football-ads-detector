@@ -36,7 +36,7 @@ No hace falta un MCP distinto por proyecto.
 
 ## Frontend en Cloudflare Pages
 
-1. Conectar el mismo repo GitHub.
+1. Conectar repo `plunktn/football-ads-detector` en la cuenta Cloudflare de Plunkton.
 2. **Root directory:** `frontend`
 3. **Build command:** `npm run build`
 4. **Framework preset:** Next.js
