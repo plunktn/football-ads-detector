@@ -16,6 +16,21 @@ reportan fijas por separado).
 - Node.js 20+
 - CPU; RapidOCR descarga sus modelos en el primer uso
 
+## Instalación local (operadores / Claude)
+
+Guía paso a paso + prompt copy-paste para dejar UI y API corriendo en tu
+máquina (recomendado para partidos grandes ~5 GB):
+
+→ **[docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md)**
+
+Resumen rápido si ya conoces el repo:
+
+```bash
+cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..
+cd frontend && npm install && cd ..
+./start.sh    # UI :43123 · API :43124 · parar con ./stop.sh
+```
+
 ## Desarrollo local
 
 Backend:
