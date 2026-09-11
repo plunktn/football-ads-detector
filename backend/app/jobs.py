@@ -11,8 +11,8 @@ from .domain.stadium import CameraProfile
 from .pipeline.brands import generate_aliases
 from .pipeline.playlist import parse_playlist
 from .pipeline.report import write_commercial_report
-from .job_storage import maybe_purge_job_media
-from .pipeline.run import AnalysisUpdate, run_analysis
+from .pipeline.catalog import persist_catalog
+from .pipeline.run import AnalysisUpdate, run_analysis, save_job_preview_frame
 from .pipeline.scoreboard import apply_kickoff_overrides, detect_kickoffs
 from .schemas import (
     BrandInput,
@@ -44,6 +44,7 @@ class JobRecord:
     kickoff: Kickoff | None = None
     result: JobResult | None = None
     created_at: str | None = None
+    catalog_confirmed_at: str | None = None
     playlist_path: Path | None = None
     events: list[dict] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict]] = field(default_factory=set)
@@ -59,6 +60,7 @@ class JobRecord:
             kickoff=self.kickoff,
             result=self.result,
             created_at=self.created_at,
+            catalog_confirmed_at=self.catalog_confirmed_at,
         )
 
 
@@ -137,6 +139,13 @@ class JobManager:
         record.result = result
         return result
 
+    def discard(self, job_id: str) -> JobRecord | None:
+        """Drop in-memory job after DB/disk deletion."""
+        record = self.jobs.pop(job_id, None)
+        if self.active_job_id == job_id:
+            self.active_job_id = None
+        return record
+
     async def recover_from_db(self) -> None:
         orphaned = await asyncio.to_thread(db.mark_orphaned_jobs_error)
         for job_id in orphaned:
@@ -196,6 +205,10 @@ class JobManager:
                     error=row["error"],
                     kickoff=kickoff,
                     result=result,
+                    created_at=row["created_at"] if "created_at" in row.keys() else None,
+                    catalog_confirmed_at=row["catalog_confirmed_at"]
+                    if "catalog_confirmed_at" in row.keys()
+                    else None,
                 )
             raise FileNotFoundError(f"Missing job metadata: {meta_path}")
 
@@ -226,6 +239,9 @@ class JobManager:
             kickoff=kickoff,
             result=result,
             created_at=row["created_at"],
+            catalog_confirmed_at=row["catalog_confirmed_at"]
+            if "catalog_confirmed_at" in row.keys()
+            else None,
             playlist_path=playlist_path,
         )
 
@@ -375,6 +391,14 @@ class JobManager:
                 kickoff=kickoff,
                 partial_brands=update.partial_brands,
             )
+            if update.observation_snapshot is not None:
+                await asyncio.to_thread(
+                    persist_catalog,
+                    record.id,
+                    record.directory,
+                    update.observation_snapshot,
+                    record.brands,
+                )
 
         return await worker
 
@@ -386,6 +410,12 @@ class JobManager:
                 progress=0.0,
                 label="Buscando el saque inicial en el marcador…",
             )
+            if record.video_paths:
+                await asyncio.to_thread(
+                    save_job_preview_frame,
+                    record.video_paths[0],
+                    record.directory / "preview.jpg",
+                )
             try:
                 camera_profile = load_stadium_profile(
                     record.config.stadium_id or "ligaecuabet"
@@ -463,11 +493,13 @@ class JobManager:
                 result_json=result_json,
             )
             await asyncio.to_thread(
-                maybe_purge_job_media,
+                persist_catalog,
+                record.id,
                 record.directory,
-                list(record.video_paths),
+                analysis.observations,
+                record.brands,
             )
-            record.video_paths = []
+            # Keep videos until catalog confirm so review still has full context fallback.
             await self._publish(
                 record,
                 status="completed",

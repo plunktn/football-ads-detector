@@ -96,6 +96,31 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS brand_groups (
+                id TEXT PRIMARY KEY,
+                titulo TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS job_frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                half TEXT NOT NULL,
+                frame_idx INTEGER NOT NULL,
+                time_seconds REAL NOT NULL,
+                zone_id TEXT,
+                posicion TEXT,
+                crop_relpath TEXT,
+                context_relpath TEXT,
+                visual_hash TEXT,
+                ocr_text TEXT,
+                machine_label TEXT NOT NULL,
+                brand_id TEXT,
+                machine_brand_ids_json TEXT DEFAULT '[]',
+                user_verdict TEXT,
+                FOREIGN KEY (job_id) REFERENCES jobs(id)
+            );
+
             CREATE TABLE IF NOT EXISTS exposure_segments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id TEXT NOT NULL,
@@ -120,8 +145,11 @@ def init_db() -> None:
                 ON jobs(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_exposure_segments_job_id
                 ON exposure_segments(job_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_job_frames_lookup
+                ON job_frames(job_id, half, frame_idx, zone_id);
             """
         )
+        _migrate_schema(conn)
         conn.commit()
 
 
@@ -215,9 +243,132 @@ def seed_stadiums() -> None:
         conn.commit()
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    ddl: str,
+) -> None:
+    if column not in _table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add catalog tables/columns to existing local SQLite files."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS brand_groups (
+            id TEXT PRIMARY KEY,
+            titulo TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS job_frames (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL,
+            half TEXT NOT NULL,
+            frame_idx INTEGER NOT NULL,
+            time_seconds REAL NOT NULL,
+            zone_id TEXT,
+            posicion TEXT,
+            crop_relpath TEXT,
+            context_relpath TEXT,
+            visual_hash TEXT,
+            ocr_text TEXT,
+            machine_label TEXT NOT NULL,
+            brand_id TEXT,
+            machine_brand_ids_json TEXT DEFAULT '[]',
+            user_verdict TEXT,
+            FOREIGN KEY (job_id) REFERENCES jobs(id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_frames_lookup
+            ON job_frames(job_id, half, frame_idx, zone_id);
+        """
+    )
+    if "brands" in {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }:
+        _add_column_if_missing(conn, "brands", "group_id", "group_id TEXT")
+        _add_column_if_missing(
+            conn, "brands", "activo", "activo INTEGER NOT NULL DEFAULT 1"
+        )
+    if "jobs" in {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }:
+        _add_column_if_missing(
+            conn, "jobs", "catalog_confirmed_at", "catalog_confirmed_at TEXT"
+        )
+        _add_column_if_missing(
+            conn,
+            "jobs",
+            "catalog_discarded_count",
+            "catalog_discarded_count INTEGER NOT NULL DEFAULT 0",
+        )
+    if "job_frames" in {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }:
+        _add_column_if_missing(
+            conn, "job_frames", "context_relpath", "context_relpath TEXT"
+        )
+        _add_column_if_missing(
+            conn, "job_frames", "visual_hash", "visual_hash TEXT"
+        )
+
+
+DEFAULT_BRAND_GROUP_ID = "ligaecuabet"
+DEFAULT_BRAND_GROUP_TITLE = "LigaEcuabet"
+
+
+def _slug_id(value: str, fallback: str = "grupo") -> str:
+    normalized = "".join(
+        char.lower() if char.isalnum() else "-" for char in value.strip()
+    )
+    return "-".join(part for part in normalized.split("-") if part) or fallback
+
+
+def seed_brand_groups() -> None:
+    """Create LigaEcuabet group and attach ungrouped legacy brands."""
+    now = _utc_now()
+    with get_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM brand_groups").fetchone()[0]
+        if count == 0:
+            conn.execute(
+                """
+                INSERT INTO brand_groups (id, titulo, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (DEFAULT_BRAND_GROUP_ID, DEFAULT_BRAND_GROUP_TITLE, now),
+            )
+        liga = conn.execute(
+            "SELECT id FROM brand_groups WHERE id = ? LIMIT 1",
+            (DEFAULT_BRAND_GROUP_ID,),
+        ).fetchone()
+        if liga is not None:
+            conn.execute(
+                "UPDATE brands SET group_id = ? WHERE group_id IS NULL",
+                (DEFAULT_BRAND_GROUP_ID,),
+            )
+        conn.commit()
+
+
 def ensure_db() -> None:
     init_db()
     seed_stadiums()
+    seed_brand_groups()
 
 
 def list_stadium_summaries() -> list[dict[str, str]]:
@@ -244,18 +395,114 @@ def _brand_has_logo(logo_path: str | None) -> bool:
 
 
 def _brand_row_to_public(row: sqlite3.Row) -> dict[str, Any]:
+    keys = set(row.keys())
+    activo = True
+    if "activo" in keys:
+        activo = True if row["activo"] is None else bool(row["activo"])
     return {
         "id": row["id"],
         "nombre": row["nombre"],
         "aliases": json.loads(row["aliases_json"] or "[]"),
         "has_logo": _brand_has_logo(row["logo_path"]),
+        "group_id": row["group_id"] if "group_id" in keys else None,
+        "activo": activo,
     }
+
+
+def _default_group_id(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute(
+        "SELECT id FROM brand_groups WHERE id = ? LIMIT 1",
+        (DEFAULT_BRAND_GROUP_ID,),
+    ).fetchone()
+    if row is not None:
+        return row["id"]
+    row = conn.execute(
+        "SELECT id FROM brand_groups ORDER BY created_at ASC LIMIT 1"
+    ).fetchone()
+    return row["id"] if row is not None else None
+
+
+def list_brand_groups() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        groups = conn.execute(
+            "SELECT id, titulo, created_at FROM brand_groups ORDER BY titulo COLLATE NOCASE"
+        ).fetchall()
+        brand_rows = conn.execute(
+            """
+            SELECT id, nombre, aliases_json, logo_path, group_id, activo
+            FROM brands
+            ORDER BY nombre COLLATE NOCASE
+            """
+        ).fetchall()
+    by_group: dict[str, list[dict[str, Any]]] = {row["id"]: [] for row in groups}
+    for brand in brand_rows:
+        public = _brand_row_to_public(brand)
+        group_id = public.get("group_id")
+        if group_id in by_group:
+            by_group[group_id].append(public)
+    return [
+        {
+            "id": row["id"],
+            "titulo": row["titulo"],
+            "created_at": row["created_at"],
+            "brands": by_group.get(row["id"], []),
+        }
+        for row in groups
+    ]
+
+
+def create_brand_group(titulo: str) -> str:
+    titulo = titulo.strip()
+    if not titulo:
+        raise ValueError("titulo es obligatorio.")
+    base = _slug_id(titulo)
+    group_id = base
+    suffix = 2
+    now = _utc_now()
+    with get_connection() as conn:
+        while conn.execute(
+            "SELECT 1 FROM brand_groups WHERE id = ? LIMIT 1",
+            (group_id,),
+        ).fetchone() is not None:
+            group_id = f"{base}-{suffix}"
+            suffix += 1
+        conn.execute(
+            """
+            INSERT INTO brand_groups (id, titulo, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (group_id, titulo, now),
+        )
+        conn.commit()
+    return group_id
+
+
+def delete_brand_group(group_id: str) -> None:
+    with get_connection() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM brand_groups WHERE id = ? LIMIT 1",
+            (group_id,),
+        ).fetchone()
+        if exists is None:
+            raise KeyError(group_id)
+        count = conn.execute(
+            "SELECT COUNT(*) FROM brands WHERE group_id = ?",
+            (group_id,),
+        ).fetchone()[0]
+        if count:
+            raise ValueError("El grupo todavía tiene marcas.")
+        conn.execute("DELETE FROM brand_groups WHERE id = ?", (group_id,))
+        conn.commit()
 
 
 def list_brands() -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, nombre, aliases_json, logo_path FROM brands ORDER BY nombre COLLATE NOCASE"
+            """
+            SELECT id, nombre, aliases_json, logo_path, group_id, activo
+            FROM brands
+            ORDER BY nombre COLLATE NOCASE
+            """
         ).fetchall()
     return [_brand_row_to_public(row) for row in rows]
 
@@ -264,21 +511,17 @@ def get_brand(brand_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, nombre, aliases_json, logo_path, created_at
+            SELECT id, nombre, aliases_json, logo_path, created_at, group_id, activo
             FROM brands WHERE id = ? LIMIT 1
             """,
             (brand_id,),
         ).fetchone()
     if row is None:
         return None
-    return {
-        "id": row["id"],
-        "nombre": row["nombre"],
-        "aliases": json.loads(row["aliases_json"] or "[]"),
-        "logo_path": row["logo_path"],
-        "created_at": row["created_at"],
-        "has_logo": _brand_has_logo(row["logo_path"]),
-    }
+    public = _brand_row_to_public(row)
+    public["logo_path"] = row["logo_path"]
+    public["created_at"] = row["created_at"]
+    return public
 
 
 def upsert_brand(
@@ -286,32 +529,253 @@ def upsert_brand(
     nombre: str,
     aliases: list[str] | None = None,
     logo_path: str | None = None,
+    group_id: str | None = None,
+    activo: int | bool | None = None,
 ) -> dict[str, Any]:
     aliases_json = json.dumps(aliases or [], ensure_ascii=False)
     now = _utc_now()
+    activo_value = 1 if activo is None else int(bool(activo))
     with get_connection() as conn:
         existing = conn.execute(
-            "SELECT logo_path FROM brands WHERE id = ? LIMIT 1",
+            "SELECT logo_path, group_id, activo FROM brands WHERE id = ? LIMIT 1",
             (brand_id,),
         ).fetchone()
         resolved_logo_path = logo_path
         if resolved_logo_path is None and existing is not None:
             resolved_logo_path = existing["logo_path"]
+        resolved_group = group_id
+        if resolved_group is None and existing is not None:
+            resolved_group = existing["group_id"]
+        if resolved_group is None:
+            resolved_group = _default_group_id(conn)
+        if existing is not None and activo is None:
+            activo_value = int(existing["activo"] if existing["activo"] is not None else 1)
+        if resolved_group is not None:
+            group_row = conn.execute(
+                "SELECT 1 FROM brand_groups WHERE id = ? LIMIT 1",
+                (resolved_group,),
+            ).fetchone()
+            if group_row is None:
+                raise ValueError(f"group_id desconocido: {resolved_group!r}.")
         conn.execute(
             """
-            INSERT INTO brands (id, nombre, aliases_json, logo_path, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO brands (
+                id, nombre, aliases_json, logo_path, created_at, group_id, activo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 nombre = excluded.nombre,
                 aliases_json = excluded.aliases_json,
-                logo_path = COALESCE(excluded.logo_path, brands.logo_path)
+                logo_path = COALESCE(excluded.logo_path, brands.logo_path),
+                group_id = COALESCE(excluded.group_id, brands.group_id),
+                activo = excluded.activo
             """,
-            (brand_id, nombre, aliases_json, resolved_logo_path, now),
+            (
+                brand_id,
+                nombre,
+                aliases_json,
+                resolved_logo_path,
+                now,
+                resolved_group,
+                activo_value,
+            ),
         )
         conn.commit()
     brand = get_brand(brand_id)
     assert brand is not None
     return brand
+
+
+def update_brand(brand_id: str, **fields: Any) -> dict[str, Any]:
+    existing = get_brand(brand_id)
+    if existing is None:
+        raise KeyError(brand_id)
+    allowed = {"nombre", "aliases", "activo", "group_id", "logo_path"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"Campos no válidos: {', '.join(sorted(unknown))}.")
+    assignments: list[str] = []
+    values: list[Any] = []
+    if "nombre" in fields and fields["nombre"] is not None:
+        nombre = str(fields["nombre"]).strip()
+        if not nombre:
+            raise ValueError("nombre es obligatorio.")
+        assignments.append("nombre = ?")
+        values.append(nombre)
+    if "aliases" in fields and fields["aliases"] is not None:
+        assignments.append("aliases_json = ?")
+        values.append(json.dumps(list(fields["aliases"]), ensure_ascii=False))
+    if "activo" in fields and fields["activo"] is not None:
+        assignments.append("activo = ?")
+        values.append(int(bool(fields["activo"])))
+    if "group_id" in fields and fields["group_id"] is not None:
+        with get_connection() as conn:
+            group_row = conn.execute(
+                "SELECT 1 FROM brand_groups WHERE id = ? LIMIT 1",
+                (fields["group_id"],),
+            ).fetchone()
+        if group_row is None:
+            raise ValueError(f"group_id desconocido: {fields['group_id']!r}.")
+        assignments.append("group_id = ?")
+        values.append(fields["group_id"])
+    if "logo_path" in fields and fields["logo_path"] is not None:
+        assignments.append("logo_path = ?")
+        values.append(fields["logo_path"])
+    if not assignments:
+        return existing
+    values.append(brand_id)
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE brands SET {', '.join(assignments)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+    brand = get_brand(brand_id)
+    assert brand is not None
+    return brand
+
+
+def delete_brand(brand_id: str) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM brands WHERE id = ?", (brand_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def _job_frame_row_to_public(row: sqlite3.Row) -> dict[str, Any]:
+    keys = set(row.keys())
+    return {
+        "id": row["id"],
+        "job_id": row["job_id"],
+        "half": row["half"],
+        "frame_idx": row["frame_idx"],
+        "time_seconds": row["time_seconds"],
+        "zone_id": row["zone_id"],
+        "posicion": row["posicion"],
+        "crop_relpath": row["crop_relpath"],
+        "context_relpath": row["context_relpath"] if "context_relpath" in keys else None,
+        "visual_hash": row["visual_hash"] if "visual_hash" in keys else None,
+        "ocr_text": row["ocr_text"],
+        "machine_label": row["machine_label"],
+        "brand_id": row["brand_id"],
+        "machine_brand_ids_json": row["machine_brand_ids_json"],
+        "user_verdict": row["user_verdict"],
+    }
+
+
+def insert_job_frames(job_id: str, rows: list[dict[str, Any]]) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM job_frames WHERE job_id = ?", (job_id,))
+        if rows:
+            conn.executemany(
+                """
+                INSERT INTO job_frames (
+                    job_id, half, frame_idx, time_seconds, zone_id, posicion,
+                    crop_relpath, context_relpath, visual_hash, ocr_text, machine_label, brand_id,
+                    machine_brand_ids_json, user_verdict
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        job_id,
+                        row.get("half", ""),
+                        int(row.get("frame_idx", 0)),
+                        float(row.get("time_seconds", 0.0)),
+                        row.get("zone_id"),
+                        row.get("posicion"),
+                        row.get("crop_relpath"),
+                        row.get("context_relpath"),
+                        row.get("visual_hash"),
+                        row.get("ocr_text"),
+                        row["machine_label"],
+                        row.get("brand_id"),
+                        row.get("machine_brand_ids_json") or "[]",
+                        row.get("user_verdict"),
+                    )
+                    for row in rows
+                ],
+            )
+        conn.commit()
+
+
+def list_job_frames(job_id: str) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM job_frames
+            WHERE job_id = ?
+            ORDER BY half, time_seconds, frame_idx, id
+            """,
+            (job_id,),
+        ).fetchall()
+    return [_job_frame_row_to_public(row) for row in rows]
+
+
+def get_job_frame(job_id: str, frame_id: int) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM job_frames WHERE id = ? AND job_id = ? LIMIT 1",
+            (frame_id, job_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _job_frame_row_to_public(row)
+
+
+def update_job_frame(frame_id: int, **fields: Any) -> dict[str, Any] | None:
+    allowed = {"brand_id", "user_verdict", "machine_label"}
+    assignments: list[str] = []
+    values: list[Any] = []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        assignments.append(f"{key} = ?")
+        values.append(value)
+    if not assignments:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM job_frames WHERE id = ? LIMIT 1",
+                (frame_id,),
+            ).fetchone()
+        return _job_frame_row_to_public(row) if row is not None else None
+    values.append(frame_id)
+    with get_connection() as conn:
+        conn.execute(
+            f"UPDATE job_frames SET {', '.join(assignments)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM job_frames WHERE id = ? LIMIT 1",
+            (frame_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _job_frame_row_to_public(row)
+
+
+def set_job_catalog_confirmed(job_id: str, iso: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE jobs SET catalog_confirmed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (iso, _utc_now(), job_id),
+        )
+        conn.commit()
+
+
+def set_job_catalog_discarded_count(job_id: str, count: int) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE jobs SET catalog_discarded_count = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (int(count), _utc_now(), job_id),
+        )
+        conn.commit()
 
 
 def upsert_stadium_profile(stadium: Stadium) -> dict[str, Any]:
@@ -660,6 +1124,20 @@ def get_job_row(job_id: str) -> sqlite3.Row | None:
             "SELECT * FROM jobs WHERE id = ? LIMIT 1",
             (job_id,),
         ).fetchone()
+
+
+def delete_job(job_id: str) -> str | None:
+    """Delete job row and related tables. Returns directory path if removed."""
+    row = get_job_row(job_id)
+    if row is None:
+        return None
+    directory = str(row["directory"])
+    with get_connection() as conn:
+        conn.execute("DELETE FROM job_frames WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM exposure_segments WHERE job_id = ?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        conn.commit()
+    return directory
 
 
 def list_non_terminal_jobs() -> list[sqlite3.Row]:

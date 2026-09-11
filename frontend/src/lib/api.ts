@@ -141,6 +141,62 @@ export type SavedBrand = {
   has_logo: boolean;
 };
 
+export type BrandSummary = {
+  id: string;
+  nombre: string;
+  aliases: string[];
+  has_logo: boolean;
+  activo?: boolean;
+  group_id?: string | null;
+};
+
+export type BrandGroup = {
+  id: string;
+  titulo: string;
+  brands: BrandSummary[];
+};
+
+export type CatalogMachineLabel = "positive" | "attention" | "empty";
+
+export type CatalogFrame = {
+  id: number;
+  half: string;
+  frame_idx: number;
+  time_seconds: number;
+  zone_id?: string | null;
+  posicion?: string | null;
+  ocr_text?: string;
+  machine_label: CatalogMachineLabel;
+  brand_id?: string | null;
+  user_verdict?: string | null;
+  image_url: string;
+  crop_image_url?: string | null;
+  has_context?: boolean;
+  visual_hash?: string | null;
+  similarity_group?: number | null;
+};
+
+export type JobCatalog = {
+  job_id: string;
+  catalog_confirmed_at: string | null;
+  discarded_count: number;
+  brands: { brand_id: string; name: string; frames: CatalogFrame[] }[];
+  attention: CatalogFrame[];
+  empty: CatalogFrame[];
+  progress: {
+    positives: number;
+    attention: number;
+    empty: number;
+    confirmed: boolean;
+  };
+};
+
+export function resolveApiUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  const path = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  return `${API_URL}${path}`;
+}
+
 export type CameraProfilePayload = {
   id: string;
   variante: "default" | "dia" | "noche";
@@ -236,9 +292,10 @@ type CreateBrandInput = {
   name: string;
   aliases?: string[];
   logo?: File;
+  group_id?: string;
 };
 
-export async function createBrand(input: CreateBrandInput): Promise<SavedBrand> {
+export async function createBrand(input: CreateBrandInput): Promise<BrandSummary> {
   const form = new FormData();
   form.append("name", input.name);
   if (input.aliases?.length) {
@@ -247,6 +304,9 @@ export async function createBrand(input: CreateBrandInput): Promise<SavedBrand> 
   if (input.logo) {
     form.append("logo", input.logo);
   }
+  if (input.group_id) {
+    form.append("group_id", input.group_id);
+  }
 
   const response = await fetch(`${API_URL}/brands`, {
     method: "POST",
@@ -254,7 +314,231 @@ export async function createBrand(input: CreateBrandInput): Promise<SavedBrand> 
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.detail ?? "No se pudo guardar la marca.");
+    throw new Error(apiErrorMessage(body, "No se pudo guardar la marca."));
+  }
+  return body;
+}
+
+export async function listBrandGroups(): Promise<BrandGroup[]> {
+  const response = await fetch(`${API_URL}/brand-groups`, {
+    cache: "no-store",
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudieron cargar los grupos."));
+  }
+  return body ?? [];
+}
+
+export async function createBrandGroup(titulo: string): Promise<BrandGroup> {
+  const response = await fetch(`${API_URL}/brand-groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ titulo }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo crear el grupo."));
+  }
+  return body;
+}
+
+export async function deleteBrandGroup(groupId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/brand-groups/${encodeURIComponent(groupId)}`,
+    { method: "DELETE" },
+  );
+  if (response.status === 204) return;
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo eliminar el grupo."));
+  }
+}
+
+type PatchBrandInput = {
+  activo?: boolean;
+  group_id?: string | null;
+  nombre?: string;
+  logo?: File;
+};
+
+export async function patchBrand(
+  brandId: string,
+  patch: PatchBrandInput,
+): Promise<BrandSummary> {
+  const url = `${API_URL}/brands/${encodeURIComponent(brandId)}`;
+  const hasFile = Boolean(patch.logo);
+  let response: Response;
+  if (hasFile) {
+    const form = new FormData();
+    if (patch.logo) form.append("logo", patch.logo);
+    if (patch.activo !== undefined) form.append("activo", String(patch.activo));
+    if (patch.group_id !== undefined) {
+      form.append("group_id", patch.group_id ?? "");
+    }
+    if (patch.nombre !== undefined) form.append("nombre", patch.nombre);
+    response = await fetch(url, { method: "PATCH", body: form });
+  } else {
+    response = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        activo: patch.activo,
+        group_id: patch.group_id,
+        nombre: patch.nombre,
+      }),
+    });
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo actualizar la marca."));
+  }
+  return body;
+}
+
+export async function deleteBrand(brandId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/brands/${encodeURIComponent(brandId)}`,
+    { method: "DELETE" },
+  );
+  if (response.status === 204) return;
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo eliminar la marca."));
+  }
+}
+
+export async function getJobCatalog(jobId: string): Promise<JobCatalog> {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/catalog`,
+    { cache: "no-store" },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo cargar el catálogo."));
+  }
+  return body;
+}
+
+export function catalogFrameImageUrl(jobId: string, frameId: number): string {
+  return `${API_URL}/jobs/${encodeURIComponent(jobId)}/catalog/frames/${frameId}/image`;
+}
+
+export function catalogFrameCropUrl(jobId: string, frameId: number): string {
+  return `${catalogFrameImageUrl(jobId, frameId)}?kind=crop`;
+}
+
+export function jobPreviewUrl(jobId: string): string {
+  return `${API_URL}/jobs/${encodeURIComponent(jobId)}/preview.jpg`;
+}
+
+export type CatalogFramePatch =
+  | { action: "false_positive" }
+  | { action: "assign"; brand_id: string };
+
+export async function patchCatalogFrame(
+  jobId: string,
+  frameId: number,
+  patch: CatalogFramePatch,
+): Promise<CatalogFrame | JobCatalog | Record<string, unknown>> {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/catalog/frames/${frameId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo actualizar el recorte."));
+  }
+  return body;
+}
+
+export async function confirmJobCatalog(jobId: string): Promise<JobCatalog> {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/catalog/confirm`,
+    { method: "POST" },
+  );
+  if (response.status === 204) {
+    return getJobCatalog(jobId);
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo confirmar el catálogo."));
+  }
+  if (body && typeof body === "object" && "brands" in body) {
+    return body as JobCatalog;
+  }
+  return getJobCatalog(jobId);
+}
+
+export type ReportFrame = {
+  id: number;
+  half: string;
+  frame_idx: number;
+  time_seconds: number;
+  posicion?: string | null;
+  ocr_text?: string;
+  image_url: string;
+  crop_image_url?: string | null;
+  has_context?: boolean;
+};
+
+export type ReportSegment = {
+  half: string;
+  clock_start: string;
+  clock_end: string;
+  video_seconds_start: number;
+  video_seconds_end: number;
+  duration_seconds: number;
+  posicion?: string | null;
+  frame_count: number;
+  sample_frame: ReportFrame;
+  frames: ReportFrame[];
+};
+
+export type ReportBrand = {
+  brand_id: string;
+  name: string;
+  appearances: number;
+  total_seconds: number;
+  minutes: number;
+  seconds: number;
+  duration_label: string;
+  frame_count: number;
+  count_1t: number;
+  count_2t: number;
+  segments: ReportSegment[];
+};
+
+export type JobReport = {
+  job_id: string;
+  catalog_confirmed_at: string | null;
+  confirmed: boolean;
+  stadium_id?: string | null;
+  created_at?: string | null;
+  summary: {
+    brand_count: number;
+    appearances: number;
+    total_seconds: number;
+    duration_label: string;
+    minutes: number;
+    seconds: number;
+  };
+  brands: ReportBrand[];
+  analyzed_seconds?: number | null;
+};
+
+export async function getJobReport(jobId: string): Promise<JobReport> {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/report`,
+    { cache: "no-store" },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo cargar el informe."));
   }
   return body;
 }
@@ -374,6 +658,16 @@ export async function listJobs(): Promise<JobSummary[]> {
     throw new Error(body?.detail ?? "No se pudo cargar el historial de análisis.");
   }
   return body ?? [];
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_URL}/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo borrar el análisis."));
+  }
 }
 
 export function exportCsvUrl(jobId: string): string {

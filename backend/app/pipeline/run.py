@@ -52,6 +52,50 @@ class AnalysisUpdate:
     processed_samples: int
     total_samples: int
     partial_brands: list[BrandResult]
+    observation_snapshot: tuple[FrameObservation, ...] | None = None
+
+
+def _write_jpeg(
+    path: Path,
+    image_bgr,
+    *,
+    max_width: int | None = None,
+    quality: int = 75,
+) -> bool:
+    out = image_bgr
+    if max_width is not None and out.shape[1] > max_width:
+        scale = max_width / float(out.shape[1])
+        out = cv2.resize(
+            out,
+            (max_width, max(1, int(round(out.shape[0] * scale)))),
+            interpolation=cv2.INTER_AREA,
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return bool(
+        cv2.imwrite(
+            str(path),
+            out,
+            [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+        )
+    )
+
+
+def save_job_preview_frame(video_path: Path, dest: Path, at_seconds: float = 30.0) -> bool:
+    """Grab one broadcast still so the UI is not empty during kickoff."""
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if not cap.isOpened():
+            return False
+        info = get_video_info(video_path)
+        t = min(max(0.0, at_seconds), max(0.0, info.duration_seconds - 0.5))
+        ok, frame, _ = read_frame_at_seconds(cap, t)
+        if not ok or frame is None:
+            ok, frame = cap.read()
+        if not ok or frame is None:
+            return False
+        return _write_jpeg(dest, frame, max_width=960, quality=70)
+    finally:
+        cap.release()
 
 
 @dataclass(frozen=True)
@@ -61,6 +105,7 @@ class AnalysisOutput:
     fixed_brands: list[BrandResult] = field(default_factory=list)
     compliance: list = field(default_factory=list)
     hit_rate: float | None = None
+    observations: list[FrameObservation] = field(default_factory=list)
 
 
 def _bounded_end(info: VideoInfo, start: float, duration: float | None) -> float:
@@ -178,7 +223,9 @@ def run_analysis(
     prepared = prepare_brands(list(brands))
     brand_pairs = [(brand.id, brand.name) for brand in prepared]
     observations: list[FrameObservation] = []
-    debug_writer = DebugCropWriter(Path(debug_dir))
+    debug_path = Path(debug_dir)
+    debug_writer = DebugCropWriter(debug_path)
+    catalog_dir = debug_path.parent / "catalog"
     processed = 0
 
     for window in windows:
@@ -225,6 +272,8 @@ def run_analysis(
                         min_repeats=min_repeats,
                     ) | match_fixed_brand_ids(roi.crop_bgr, list(brands))
                     weak: set[str] = set()
+                    crop_relpath: str | None = None
+                    context_relpath: str | None = None
                     if zone.tipo_panel != "FIXED_PRINT":
                         weak = match_brand_ids(
                             raw_text,
@@ -233,6 +282,26 @@ def run_analysis(
                             min_repeats=1,
                         )
                         weak -= strong
+                        catalog_dir.mkdir(parents=True, exist_ok=True)
+                        if zone.id:
+                            relpath = f"catalog/led_{frame_idx:06d}_{zone.id}.jpg"
+                        else:
+                            relpath = f"catalog/led_{frame_idx:06d}.jpg"
+                        if _write_jpeg(
+                            debug_path.parent / relpath,
+                            roi.crop_bgr,
+                            quality=85,
+                        ):
+                            crop_relpath = relpath
+                        ctx_rel = f"catalog/ctx_{frame_idx:06d}.jpg"
+                        ctx_path = debug_path.parent / ctx_rel
+                        if ctx_path.is_file() or _write_jpeg(
+                            ctx_path,
+                            frame,
+                            max_width=1280,
+                            quality=72,
+                        ):
+                            context_relpath = ctx_rel
                     frame_observations.append(
                         FrameObservation(
                             half=window.half,
@@ -245,6 +314,9 @@ def run_analysis(
                             tipo_panel=zone.tipo_panel,
                             shot=shot,
                             ambiguous_brand_ids=frozenset(weak),
+                            ocr_text=raw_text,
+                            crop_relpath=crop_relpath,
+                            context_relpath=context_relpath,
                         )
                     )
                 if not frame_observations:
@@ -271,6 +343,11 @@ def run_analysis(
                         for item in observations
                         if item.tipo_panel != "FIXED_PRINT"
                     ]
+                    flush_catalog = (
+                        processed == 1
+                        or processed % 8 == 0
+                        or processed == total_samples
+                    )
                     on_update(
                         AnalysisUpdate(
                             half=window.half,
@@ -281,6 +358,9 @@ def run_analysis(
                             partial_brands=aggregate_observations(
                                 led_partial,
                                 brand_pairs,
+                            ),
+                            observation_snapshot=(
+                                tuple(observations) if flush_catalog else None
                             ),
                         )
                     )
@@ -350,4 +430,5 @@ def run_analysis(
         fixed_brands=fixed_brands,
         compliance=compliance,
         hit_rate=rate,
+        observations=observations,
     )

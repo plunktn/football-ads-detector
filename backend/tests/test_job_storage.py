@@ -18,6 +18,9 @@ class JobStorageTests(unittest.TestCase):
         debug = self.directory / "debug"
         debug.mkdir()
         (debug / "led_000001.jpg").write_bytes(b"jpg")
+        catalog = self.directory / "catalog"
+        catalog.mkdir()
+        (catalog / "led_000001.jpg").write_bytes(b"catalog-jpg")
         meta = {
             "brands": [],
             "video_paths": [str(self.video)],
@@ -38,6 +41,7 @@ class JobStorageTests(unittest.TestCase):
         self.assertFalse(self.video.exists())
         self.assertFalse((self.directory / "debug").exists())
         self.assertTrue((self.directory / "result.json").exists())
+        self.assertTrue((self.directory / "catalog" / "led_000001.jpg").exists())
         self.assertIn(self.video, removed)
 
         meta = json.loads((self.directory / "meta.json").read_text(encoding="utf-8"))

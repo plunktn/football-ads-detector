@@ -1,27 +1,19 @@
 "use client";
 
 import {
-  Activity,
-  AlertCircle,
-  Check,
+  ArrowLeft,
   ChevronDown,
-  CircleHelp,
-  Clock3,
   Download,
   FileVideo,
   History,
-  Info,
   LoaderCircle,
-  Plus,
   ScanLine,
-  ShieldCheck,
-  SlidersHorizontal,
   Trash2,
   UploadCloud,
-  X,
   ZoomIn,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   type ChangeEvent,
   type DragEvent,
@@ -29,30 +21,32 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 
+import { CatalogReview } from "@/components/catalog-review";
+import { FrameLightbox } from "@/components/frame-lightbox";
 import {
   type Brand,
+  type BrandGroup,
   type BrandResult,
+  type BrandSummary,
   type ComplianceRow,
   type DurationMode,
   type Job,
   type JobMode,
   type JobSummary,
-  type SavedBrand,
   type Stadium,
   type VerificationStatus,
   DOUBTFUL_STATUSES,
+  deleteJob,
   exportCsvUrl,
   exportXlsxUrl,
   getActiveJob,
   getFrameUrl,
   getJob,
-  listBrands,
+  jobPreviewUrl,
+  listBrandGroups,
   listJobs,
   listStadiums,
-  proposeCalibration,
-  saveCalibration,
   submitJob,
   watchJob,
 } from "@/lib/api";
@@ -76,6 +70,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -84,17 +79,6 @@ import {
 } from "@/components/ui/tooltip";
 
 const ACCEPTED_VIDEO_TYPES = ".mp4,.mov,.mkv,.webm";
-
-function slugify(value: string) {
-  return (
-    value
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)/g, "") || "brand"
-  );
-}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -105,6 +89,34 @@ function formatSeconds(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes} min ${seconds} s`;
+}
+
+function JobPreviewStill({ jobId }: { jobId: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const [gone, setGone] = useState(false);
+  if (gone) return null;
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-black/30">
+      <p className="border-b border-border/50 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+        Vista del partido
+      </p>
+      <Image
+        src={`${jobPreviewUrl(jobId)}?a=${attempt}`}
+        alt="Vista previa del partido en análisis"
+        width={960}
+        height={540}
+        unoptimized
+        className="h-auto max-h-[42vh] w-full object-contain"
+        onError={() => {
+          if (attempt >= 10) {
+            setGone(true);
+            return;
+          }
+          window.setTimeout(() => setAttempt((value) => value + 1), 1200);
+        }}
+      />
+    </div>
+  );
 }
 
 function formatJobDate(iso: string) {
@@ -169,7 +181,7 @@ function FileDropzone({
     if (!candidate) return;
     const extension = `.${candidate.name.split(".").pop()?.toLowerCase()}`;
     if (![".mp4", ".mov", ".mkv", ".webm"].includes(extension)) {
-      onInvalid?.("Ese archivo no parece un video compatible. Usá MP4, MOV, MKV o WebM.");
+      onInvalid?.("Ese archivo no parece un video compatible. Usa MP4, MOV, MKV o WebM.");
       return;
     }
     onInvalid?.("");
@@ -371,20 +383,6 @@ function ResultsTable({
     (brand) => resultById.get(brand.id) ?? emptyResult(brand),
   );
 
-  useEffect(() => {
-    if (!selectedFrame) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedFrame(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [selectedFrame]);
-
   return (
     <>
       <div className="overflow-hidden rounded-xl border border-border/80">
@@ -550,276 +548,25 @@ function ResultsTable({
           </table>
         </div>
       </div>
-      {selectedFrame &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/80 p-4 backdrop-blur-sm"
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Frame ampliado: ${selectedFrame.label}`}
-            onClick={() => setSelectedFrame(null)}
-          >
-            <div
-              className="relative my-auto w-full max-w-5xl rounded-2xl border border-border bg-card p-3 shadow-2xl"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="mb-3 flex items-center justify-between gap-4 px-1">
-                <p className="truncate font-mono text-xs text-muted-foreground">
-                  {selectedFrame.label}
-                </p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-10 shrink-0"
-                  onClick={() => setSelectedFrame(null)}
-                  aria-label="Cerrar frame ampliado"
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-              <Image
-                src={selectedFrame.src}
-                alt={selectedFrame.label}
-                width={1280}
-                height={720}
-                unoptimized
-                className="h-auto max-h-[78vh] w-full rounded-xl object-contain"
-                style={{ width: "100%", height: "auto" }}
-              />
-            </div>
-          </div>,
-          document.body,
-        )}
+      {selectedFrame ? (
+        <FrameLightbox
+          src={selectedFrame.src}
+          label={selectedFrame.label}
+          onClose={() => setSelectedFrame(null)}
+        />
+      ) : null}
     </>
   );
 }
 
-const CALIBRATION_ACCEPT = ".jpg,.jpeg,.png,.bmp,.webp,.mp4,.mov,.mkv,.webm";
-
-function StadiumCalibrationSection({
-  onSaved,
-}: {
-  onSaved: (stadiumId: string) => void;
-}) {
-  const [sampleFile, setSampleFile] = useState<File>();
-  const [stadiumId, setCalibStadiumId] = useState("");
-  const [nombre, setNombre] = useState("");
-  const [pais, setPais] = useState("");
-  const [cameraJson, setCameraJson] = useState("");
-  const [previews, setPreviews] = useState<{
-    scoreboard?: string;
-    grass?: string;
-  }>({});
-  const [busy, setBusy] = useState<"propose" | "save" | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSample = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setSampleFile(file);
-    setError(null);
-    setMessage(null);
+function summaryToBrand(brand: BrandSummary): Brand {
+  return {
+    id: brand.id,
+    name: brand.nombre,
+    aliases: brand.aliases.length
+      ? brand.aliases
+      : [brand.nombre.replace(/\s+/g, ""), brand.nombre.toUpperCase()],
   };
-
-  const handlePropose = async () => {
-    if (!sampleFile) {
-      setError("Sube una imagen o un video de muestra.");
-      return;
-    }
-    setBusy("propose");
-    setError(null);
-    setMessage(null);
-    try {
-      const proposal = await proposeCalibration(sampleFile);
-      setCameraJson(JSON.stringify(proposal.camera, null, 2));
-      setPreviews({
-        scoreboard: proposal.previews?.scoreboard_jpeg_b64
-          ? `data:image/jpeg;base64,${proposal.previews.scoreboard_jpeg_b64}`
-          : undefined,
-        grass: proposal.previews?.grass_mask_jpeg_b64
-          ? `data:image/jpeg;base64,${proposal.previews.grass_mask_jpeg_b64}`
-          : undefined,
-      });
-      setMessage("Propuesta lista. Revisa el crop HSV y guarda el perfil.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo proponer.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!stadiumId.trim() || !nombre.trim()) {
-      setError("Indica el id y el nombre del estadio.");
-      return;
-    }
-    let camera;
-    try {
-      camera = JSON.parse(cameraJson);
-    } catch {
-      setError("El JSON de la cámara no es válido.");
-      return;
-    }
-    setBusy("save");
-    setError(null);
-    setMessage(null);
-    try {
-      const saved = await saveCalibration({
-        stadium_id: stadiumId.trim(),
-        nombre: nombre.trim(),
-        pais: pais.trim() || null,
-        camera,
-      });
-      setMessage(
-        `Perfil ${saved.id} guardado (versión ${saved.version}). Ya aparece en el selector.`,
-      );
-      onSaved(saved.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo guardar.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <details className="rounded-xl border border-border/70 bg-background/35">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-3 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
-        <SlidersHorizontal className="size-4 text-primary" aria-hidden="true" />
-        Calibrar estadio
-        <ChevronDown className="ml-auto size-4 text-muted-foreground" aria-hidden="true" />
-      </summary>
-      <div className="space-y-3 border-t border-border/60 px-3 py-3">
-        <p className="text-xs text-muted-foreground">
-          Sube un frame o un clip corto. El sistema propone crop del marcador y
-          HSV del césped; tú confirmas y guardas una nueva versión del perfil.
-        </p>
-        <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-background/40 px-3 py-4 text-center hover:border-primary/60">
-          <input
-            type="file"
-            accept={CALIBRATION_ACCEPT}
-            onChange={handleSample}
-            className="sr-only"
-          />
-          <UploadCloud className="mb-2 size-4 text-muted-foreground" aria-hidden="true" />
-          <span className="text-xs font-medium text-foreground">
-            {sampleFile ? sampleFile.name : "Subir imagen o video de muestra"}
-          </span>
-        </label>
-        <Button
-          type="button"
-          variant="secondary"
-          className="h-10 w-full gap-2"
-          onClick={() => void handlePropose()}
-          disabled={busy !== null || !sampleFile}
-        >
-          {busy === "propose" ? (
-            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-          ) : null}
-          Proponer
-        </Button>
-        {(previews.scoreboard || previews.grass) && (
-          <div className="grid grid-cols-2 gap-2">
-            {previews.scoreboard ? (
-              <figure>
-                <img
-                  src={previews.scoreboard}
-                  alt="Recorte propuesto del marcador"
-                  className="h-20 w-full rounded-lg border border-border/70 object-cover"
-                />
-                <figcaption className="mt-1 font-mono text-[10px] text-muted-foreground">
-                  Marcador
-                </figcaption>
-              </figure>
-            ) : null}
-            {previews.grass ? (
-              <figure>
-                <img
-                  src={previews.grass}
-                  alt="Máscara HSV del césped"
-                  className="h-20 w-full rounded-lg border border-border/70 object-cover"
-                />
-                <figcaption className="mt-1 font-mono text-[10px] text-muted-foreground">
-                  Césped
-                </figcaption>
-              </figure>
-            ) : null}
-          </div>
-        )}
-        <div className="grid gap-2">
-          <div>
-            <Label htmlFor="calib-stadium-id" className="text-xs">
-              Id del estadio
-            </Label>
-            <Input
-              id="calib-stadium-id"
-              value={stadiumId}
-              onChange={(event) => setCalibStadiumId(event.target.value)}
-              placeholder="capwell"
-              className="mt-1 h-10 font-mono text-sm"
-            />
-          </div>
-          <div>
-            <Label htmlFor="calib-nombre" className="text-xs">
-              Nombre
-            </Label>
-            <Input
-              id="calib-nombre"
-              value={nombre}
-              onChange={(event) => setNombre(event.target.value)}
-              placeholder="Estadio Capwell"
-              className="mt-1 h-10 text-sm"
-            />
-          </div>
-          <div>
-            <Label htmlFor="calib-pais" className="text-xs">
-              País (opcional)
-            </Label>
-            <Input
-              id="calib-pais"
-              value={pais}
-              onChange={(event) => setPais(event.target.value)}
-              placeholder="Ecuador"
-              className="mt-1 h-10 text-sm"
-            />
-          </div>
-          <div>
-            <Label htmlFor="calib-camera-json" className="text-xs">
-              Perfil de cámara (JSON editable)
-            </Label>
-            <textarea
-              id="calib-camera-json"
-              value={cameraJson}
-              onChange={(event) => setCameraJson(event.target.value)}
-              spellCheck={false}
-              rows={10}
-              className="mt-1 w-full rounded-md border border-input bg-background/60 p-2 font-mono text-[11px] text-foreground"
-              placeholder='Pulsa "Proponer" para rellenar crop, HSV y banda LED.'
-            />
-          </div>
-        </div>
-        <Button
-          type="button"
-          className="h-10 w-full"
-          onClick={() => void handleSave()}
-          disabled={busy !== null || !cameraJson.trim()}
-        >
-          {busy === "save" ? (
-            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-          ) : null}
-          Guardar perfil
-        </Button>
-        {error ? (
-          <p className="text-xs text-destructive">{error}</p>
-        ) : null}
-        {message ? (
-          <p className="text-xs text-muted-foreground">{message}</p>
-        ) : null}
-      </div>
-    </details>
-  );
 }
 
 export default function Home() {
@@ -828,7 +575,7 @@ export default function Home() {
   const [durationPreset, setDurationPreset] = useState<"5min" | "10min" | "full" | "custom">(
     "5min",
   );
-  const [customMinutes, setCustomMinutes] = useState(16);
+  const [customMinutes, setCustomMinutes] = useState("");
   const [stadiumId, setStadiumId] = useState("ligaecuabet");
   const [stadiums, setStadiums] = useState<Stadium[]>([
     { id: "ligaecuabet", nombre: "LigaEcuabet (default)" },
@@ -841,11 +588,16 @@ export default function Home() {
   const [kickoffOffsetSec, setKickoffOffsetSec] = useState("");
   const [secondHalfStartSec, setSecondHalfStartSec] = useState("");
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [brandName, setBrandName] = useState("");
-  const [savedBrands, setSavedBrands] = useState<SavedBrand[]>([]);
-  const [libraryBrandId, setLibraryBrandId] = useState("");
+  const [brandGroups, setBrandGroups] = useState<BrandGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [jobBrandEnabled, setJobBrandEnabled] = useState<Record<string, boolean>>(
+    {},
+  );
   const [job, setJob] = useState<Job | null>(null);
   const [recentJobs, setRecentJobs] = useState<JobSummary[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<JobSummary | null>(null);
+  const [deletingJob, setDeletingJob] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const stopWatching = useRef<(() => void) | null>(null);
@@ -875,8 +627,19 @@ export default function Home() {
     job?.status === "processing";
   const hasVideo =
     mode === "single" ? Boolean(video) : Boolean(videoFirst && videoSecond);
+  const selectedGroup = brandGroups.find((group) => group.id === selectedGroupId);
+  const enabledBrands = (selectedGroup?.brands ?? [])
+    .filter((brand) => jobBrandEnabled[brand.id])
+    .map(summaryToBrand);
+  const customMinutesValid = (() => {
+    if (durationPreset !== "custom") return true;
+    const parsed = Number(customMinutes);
+    return customMinutes.trim() !== "" && Number.isFinite(parsed) && parsed >= 1;
+  })();
   const canSubmit =
-    hasVideo && (brands.length > 0 || Boolean(usePlaylist && playlist));
+    hasVideo &&
+    customMinutesValid &&
+    (enabledBrands.length > 0 || Boolean(usePlaylist && playlist));
 
   const attachToJob = (candidate: Job) => {
     setJob(candidate);
@@ -955,12 +718,21 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    void listBrands()
+    void listBrandGroups()
       .then((items) => {
-        if (!cancelled) setSavedBrands(items);
+        if (cancelled) return;
+        setBrandGroups(items);
+        setSelectedGroupId((current) => {
+          if (current && items.some((group) => group.id === current)) return current;
+          const seeded = items.find((group) => group.id === "ligaecuabet");
+          return seeded?.id ?? items[0]?.id ?? "";
+        });
       })
       .catch(() => {
-        // The job form stays usable without the brand library.
+        if (!cancelled) setBrandGroups([]);
+      })
+      .finally(() => {
+        if (!cancelled) setGroupsLoading(false);
       });
 
     return () => {
@@ -968,52 +740,14 @@ export default function Home() {
     };
   }, []);
 
-  const addBrand = () => {
-    const name = brandName.trim();
-    if (!name) return;
-    const baseId = slugify(name);
-    let id = baseId;
-    let suffix = 2;
-    while (brands.some((brand) => brand.id === id)) {
-      id = `${baseId}-${suffix}`;
-      suffix += 1;
+  useEffect(() => {
+    const group = brandGroups.find((item) => item.id === selectedGroupId);
+    const next: Record<string, boolean> = {};
+    for (const brand of group?.brands ?? []) {
+      next[brand.id] = brand.activo !== false;
     }
-    setBrands((current) => [
-      ...current,
-      {
-        id,
-        name,
-        aliases: [name.replace(/\s+/g, ""), name.toUpperCase()],
-      },
-    ]);
-    setBrandName("");
-  };
-
-  const addBrandFromLibrary = () => {
-    const saved = savedBrands.find((item) => item.id === libraryBrandId);
-    if (!saved || brands.some((brand) => brand.id === saved.id)) return;
-    setBrands((current) => [
-      ...current,
-      {
-        id: saved.id,
-        name: saved.nombre,
-        aliases: saved.aliases.length
-          ? saved.aliases
-          : [saved.nombre.replace(/\s+/g, ""), saved.nombre.toUpperCase()],
-      },
-    ]);
-    setLibraryBrandId("");
-  };
-
-  const removeBrand = (id: string) => {
-    setBrands((current) => current.filter((brand) => brand.id !== id));
-  };
-
-  const setLogo = (id: string, logo: File | undefined) => {
-    setBrands((current) =>
-      current.map((brand) => (brand.id === id ? { ...brand, logo } : brand)),
-    );
-  };
+    setJobBrandEnabled(next);
+  }, [selectedGroupId, brandGroups]);
 
   const handleSubmit = async () => {
     if (!canSubmit || isBusy) return;
@@ -1035,7 +769,7 @@ export default function Home() {
         mode,
         durationMode: effectiveDuration,
         stadiumId,
-        brands,
+        brands: enabledBrands,
         video,
         videoFirst,
         videoSecond,
@@ -1050,6 +784,7 @@ export default function Home() {
             ? secondParsed
             : null,
       });
+      setBrands(enabledBrands);
       const initialJob: Job = {
         id: created.id,
         status: "queued",
@@ -1138,107 +873,77 @@ export default function Home() {
     setConnectionError(null);
   };
 
+  useEffect(() => {
+    if (!deleteTarget || deletingJob) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDeleteTarget(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteTarget, deletingJob]);
+
+  const handleDeleteJob = async () => {
+    if (!deleteTarget) return;
+    setDeletingJob(true);
+    try {
+      await deleteJob(deleteTarget.id);
+      setRecentJobs((current) =>
+        current.filter((item) => item.id !== deleteTarget.id),
+      );
+      if (job?.id === deleteTarget.id) {
+        resetJob();
+      }
+      setConnectionError(null);
+      setDeleteTarget(null);
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "No se pudo borrar el análisis.",
+      );
+      setDeleteTarget(null);
+    } finally {
+      setDeletingJob(false);
+    }
+  };
+
   const resultBrands =
     job?.result?.brands ??
     (job?.status === "processing"
       ? []
       : brands.map((brand) => emptyResult(brand)));
 
+  const workspaceMode = Boolean(job);
+  const canLeaveWorkspace =
+    job?.status === "completed" || job?.status === "error";
+
   return (
     <main className="min-h-dvh overflow-x-hidden bg-background">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_0%,oklch(0.32_0.12_145/0.12),transparent_32%),radial-gradient(circle_at_85%_10%,oklch(0.35_0.1_75/0.09),transparent_25%)]" />
-      <div className="relative mx-auto flex min-h-dvh w-full max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
-        <header className="flex items-center justify-between border-b border-border/60 pb-5">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[0_0_24px_oklch(0.7_0.18_145/0.2)]">
-              <ScanLine className="size-5" aria-hidden="true" />
-            </div>
-            <div>
-              <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-primary">
-                Match ops / 01
-              </p>
-              <p className="text-sm font-semibold tracking-tight text-foreground">
-                Football Ads Detector
-              </p>
-            </div>
-          </div>
-          <Badge
-            variant="outline"
-            className="gap-2 border-primary/25 bg-primary/5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-primary"
-          >
-            <span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_currentColor]" />
-            CPU / local
-          </Badge>
-        </header>
+      <div
+        className={`relative mx-auto flex min-h-dvh w-full flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 ${
+          workspaceMode ? "max-w-6xl" : "max-w-3xl"
+        }`}
+      >
+        {!workspaceMode ? (
+          <>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            Nuevo análisis
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Video, grupo de marcas, ventana y estadio.
+          </p>
+        </div>
 
-        <section className="grid flex-1 gap-8 py-9 lg:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)] lg:gap-12 lg:py-14">
-          <div className="flex flex-col justify-center">
-            <div className="mb-9 max-w-2xl">
-              <Badge className="mb-5 gap-2 border border-primary/20 bg-primary/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-primary hover:bg-primary/10">
-                <Activity className="size-3.5" aria-hidden="true" />
-                LED sideline intelligence
-              </Badge>
-              <h1 className="max-w-xl text-4xl font-semibold leading-[1.05] tracking-[-0.045em] text-foreground sm:text-6xl">
-                Medí cada segundo de tus{" "}
-                <span className="text-primary [text-shadow:0_0_24px_oklch(0.7_0.18_145/0.18)]">
-                  vallas LED.
-                </span>
-              </h1>
-              <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
-                Subí el partido, cargá tus marcas y obtené apariciones,
-                exposición y frames de inicio. El análisis mira la franja a
-                ras de césped, no las lonas fijas ni los fondos de arco.
-              </p>
-            </div>
-
-            <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
-              {[
-                { icon: ShieldCheck, label: "ROI geométrica", value: "Solo LED" },
-                { icon: Clock3, label: "Muestreo", value: "1 frame / s" },
-                { icon: ScanLine, label: "Lectura", value: "OCR CPU" },
-              ].map(({ icon: Icon, label, value }) => (
-                <div
-                  key={label}
-                  className="rounded-xl border border-border/70 bg-card/35 p-4 backdrop-blur-sm"
-                >
-                  <Icon className="mb-5 size-4 text-primary" aria-hidden="true" />
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                    {label}
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-foreground">{value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <Card className="border-border/80 bg-card/80 shadow-2xl shadow-black/20 backdrop-blur-xl">
-            <CardHeader className="border-b border-border/60 pb-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-lg">Configurar análisis</CardTitle>
-                  <CardDescription className="mt-1.5">
-                    Prepará la fuente y las marcas a buscar.
-                  </CardDescription>
-                </div>
-                <div className="rounded-lg border border-border/70 bg-muted/30 p-2 text-muted-foreground">
-                  <CircleHelp className="size-4" aria-hidden="true" />
-                </div>
-              </div>
-            </CardHeader>
+          <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
             <CardContent className="space-y-7 pt-6">
               <section aria-labelledby="video-heading">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 id="video-heading" className="text-sm font-semibold text-foreground">
-                      Video del partido
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      MP4, MOV, MKV o WebM
-                    </p>
-                  </div>
-                  <Badge variant="secondary" className="font-mono text-[10px]">
-                    01 / 03
-                  </Badge>
+                <div className="mb-3">
+                  <h2 id="video-heading" className="text-sm font-semibold text-foreground">
+                    Video del partido
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    MP4, MOV, MKV o WebM
+                  </p>
                 </div>
                 <Tabs
                   value={mode}
@@ -1264,8 +969,8 @@ export default function Home() {
                   <TabsContent value="single" className="mt-3">
                     <FileDropzone
                       id="video-single"
-                      label="Arrastrá el partido acá"
-                      hint="o elegí un archivo · partido completo"
+                      label="Arrastra el partido acá"
+                      hint="o elige un archivo · partido completo"
                       file={video}
                       onFileChange={setVideo}
                       onInvalid={(message) => setConnectionError(message || null)}
@@ -1295,156 +1000,111 @@ export default function Home() {
               <Separator className="bg-border/60" />
 
               <section aria-labelledby="brands-heading">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 id="brands-heading" className="text-sm font-semibold text-foreground">
-                      Marcas a detectar
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      El nombre es obligatorio. El logo es opcional.
-                    </p>
-                  </div>
-                  <Badge variant="secondary" className="font-mono text-[10px]">
-                    02 / 03
-                  </Badge>
+                <div className="mb-3">
+                  <h2 id="brands-heading" className="text-sm font-semibold text-foreground">
+                    Marcas a detectar
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Grupo del catálogo. Los interruptores aplican solo a este análisis.
+                  </p>
                 </div>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Label htmlFor="brand-name" className="sr-only">
-                      Nombre de la marca
+                {groupsLoading ? (
+                  <p className="rounded-lg border border-border/70 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                    Cargando grupos…
+                  </p>
+                ) : brandGroups.length ? (
+                  <>
+                    <Label htmlFor="brand-group" className="sr-only">
+                      Grupo
                     </Label>
-                    <Input
-                      id="brand-name"
-                      value={brandName}
-                      onChange={(event) => setBrandName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          addBrand();
-                        }
+                    <Select
+                      value={selectedGroupId}
+                      onValueChange={(value) => {
+                        if (value) setSelectedGroupId(value);
                       }}
-                      placeholder="Ej. NETT plus"
-                      className="h-11 bg-background/60 pr-3"
                       disabled={Boolean(isBusy)}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="h-11 gap-2 px-4"
-                    onClick={addBrand}
-                    disabled={!brandName.trim() || Boolean(isBusy)}
-                  >
-                    <Plus className="size-4" aria-hidden="true" />
-                    <span className="hidden sm:inline">Agregar</span>
-                  </Button>
-                </div>
-                {savedBrands.length ? (
-                  <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 p-3">
-                    <p className="text-xs font-medium text-foreground">
-                      Biblioteca de marcas
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Reutilizá marcas guardadas con logo en el servidor.
-                    </p>
-                    <div className="mt-2 flex gap-2">
-                      <Select
-                        value={libraryBrandId}
-                        onValueChange={(value) => {
-                          if (value) setLibraryBrandId(value);
-                        }}
-                        disabled={Boolean(isBusy)}
-                      >
-                        <SelectTrigger className="h-10 flex-1 bg-background/60">
-                          <SelectValue placeholder="Elegir marca guardada" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {savedBrands.map((saved) => (
-                            <SelectItem
-                              key={saved.id}
-                              value={saved.id}
-                              disabled={brands.some((brand) => brand.id === saved.id)}
+                    >
+                      <SelectTrigger id="brand-group" className="h-11 w-full bg-background/60">
+                        <SelectValue placeholder="Elige un grupo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {brandGroups.map((group) => (
+                          <SelectItem key={group.id} value={group.id}>
+                            {group.titulo}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedGroup?.brands.length ? (
+                      <div className="mt-3 space-y-2">
+                        {selectedGroup.brands.map((brand) => {
+                          const enabled = Boolean(jobBrandEnabled[brand.id]);
+                          return (
+                            <label
+                              key={brand.id}
+                              className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
+                                enabled
+                                  ? "border-primary/30 bg-primary/5"
+                                  : "border-border/70 bg-muted/20"
+                              } ${isBusy ? "pointer-events-none opacity-50" : "hover:border-border"}`}
                             >
-                              {saved.nombre}
-                              {saved.has_logo ? " · logo" : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 shrink-0 px-3"
-                        onClick={addBrandFromLibrary}
-                        disabled={
-                          !libraryBrandId ||
-                          Boolean(isBusy) ||
-                          brands.some((brand) => brand.id === libraryBrandId)
-                        }
-                      >
-                        Usar
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-                {brands.length ? (
-                  <div className="mt-3 space-y-2">
-                    {brands.map((brand) => (
-                      <div
-                        key={brand.id}
-                        className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/25 p-2.5"
-                      >
-                        <Badge
-                          variant="outline"
-                          className="max-w-[45%] gap-2 truncate bg-background/50"
-                        >
-                          <span className="size-1.5 shrink-0 rounded-full bg-primary" />
-                          <span className="truncate">{brand.name}</span>
-                        </Badge>
-                        <label className="ml-auto flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground">
-                          <Input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            className="sr-only"
-                            onChange={(event) => setLogo(brand.id, event.target.files?.[0])}
-                            disabled={Boolean(isBusy)}
-                          />
-                          <UploadCloud className="size-3.5" aria-hidden="true" />
-                          {brand.logo ? "Logo cargado" : "Logo opcional"}
-                        </label>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-9 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeBrand(brand.id)}
-                          disabled={Boolean(isBusy)}
-                          aria-label={`Quitar ${brand.name}`}
-                        >
-                          <Trash2 className="size-4" aria-hidden="true" />
-                        </Button>
+                              <span
+                                className={`min-w-0 truncate text-sm font-medium ${
+                                  enabled ? "text-foreground" : "text-muted-foreground"
+                                }`}
+                              >
+                                {brand.nombre}
+                              </span>
+                              <Switch
+                                checked={enabled}
+                                disabled={Boolean(isBusy)}
+                                onCheckedChange={(checked) =>
+                                  setJobBrandEnabled((current) => ({
+                                    ...current,
+                                    [brand.id]: checked,
+                                  }))
+                                }
+                                aria-label={`${enabled ? "Desactivar" : "Activar"} ${brand.nombre}`}
+                              />
+                            </label>
+                          );
+                        })}
                       </div>
-                    ))}
-                  </div>
+                    ) : (
+                      <div className="mt-3 rounded-lg border border-dashed border-border/70 px-4 py-3 text-center text-xs text-muted-foreground">
+                        Este grupo no tiene marcas.{" "}
+                        <Link
+                          href="/configuracion"
+                          className="font-medium text-primary underline-offset-4 hover:underline"
+                        >
+                          Agregar en Configuración
+                        </Link>
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <div className="mt-3 rounded-lg border border-dashed border-border/70 px-4 py-3 text-center text-xs text-muted-foreground">
-                    Todavía no agregaste marcas.
+                  <div className="rounded-lg border border-dashed border-border/70 px-4 py-4 text-center text-xs text-muted-foreground">
+                    Todavía no hay grupos de marcas.{" "}
+                    <Link
+                      href="/configuracion"
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      Créalos en Configuración
+                    </Link>
                   </div>
                 )}
               </section>
 
               <Separator className="bg-border/60" />
 
-              <section aria-labelledby="playlist-heading">
-                <div className="mb-3">
-                  <h2 id="playlist-heading" className="text-sm font-semibold text-foreground">
-                    Playlist / reporte Lions
-                  </h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Sin playlist el job hace discovery a 1 fps. Con Excel se verifica
-                    cada pauta 1T/2T con estados HIT/MISS/dudosos y sale el informe.
-                  </p>
-                </div>
+              <details className="rounded-lg border border-border/70 bg-muted/15 open:pb-0">
+                <summary className="cursor-pointer list-none px-3 py-3 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+                  Playlist / reporte Lions
+                  <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                    Opcional. Sin playlist = discovery.
+                  </span>
+                </summary>
+                <div className="space-y-3 border-t border-border/60 px-3 py-3">
                 <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
                   <input
                     type="checkbox"
@@ -1466,7 +1126,6 @@ export default function Home() {
                     </span>
                     <span className="mt-0.5 block text-xs text-muted-foreground">
                       Sube el xlsx multi-hoja (PREVIA / 1T / ENTRETIEMPO / 2T / POST).
-                      Con playlist se analiza el partido completo.
                     </span>
                   </span>
                 </label>
@@ -1531,23 +1190,19 @@ export default function Home() {
                     </p>
                   </div>
                 ) : null}
-              </section>
+                </div>
+              </details>
 
               <Separator className="bg-border/60" />
 
               <section aria-labelledby="duration-heading">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 id="duration-heading" className="text-sm font-semibold text-foreground">
-                      Ventana de análisis
-                    </h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Útil para validar clips antes del partido entero.
-                    </p>
-                  </div>
-                  <Badge variant="secondary" className="font-mono text-[10px]">
-                    03 / 03
-                  </Badge>
+                <div className="mb-3">
+                  <h2 id="duration-heading" className="text-sm font-semibold text-foreground">
+                    Ventana de análisis
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Desde el saque del marcador.
+                  </p>
                 </div>
                 <Select
                   value={durationPreset}
@@ -1555,7 +1210,14 @@ export default function Home() {
                     const preset = value as "5min" | "10min" | "full" | "custom";
                     setDurationPreset(preset);
                     if (preset === "custom") {
-                      setDurationMode(`${customMinutes}min`);
+                      const parsed = Number(customMinutes);
+                      if (
+                        customMinutes.trim() &&
+                        Number.isFinite(parsed) &&
+                        parsed >= 1
+                      ) {
+                        setDurationMode(`${Math.min(180, Math.round(parsed))}min`);
+                      }
                     } else {
                       setDurationMode(preset);
                     }
@@ -1563,7 +1225,7 @@ export default function Home() {
                   disabled={Boolean(isBusy)}
                 >
                   <SelectTrigger className="h-11 w-full bg-background/60">
-                    <SelectValue placeholder="Elegí una duración" />
+                    <SelectValue placeholder="Elige una duración" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="5min">5 minutos</SelectItem>
@@ -1580,14 +1242,17 @@ export default function Home() {
                       max={180}
                       step={1}
                       value={customMinutes}
+                      placeholder="Minutos"
                       disabled={Boolean(isBusy)}
                       onChange={(event) => {
-                        const next = Number(event.target.value);
-                        const minutes = Number.isFinite(next)
-                          ? Math.min(180, Math.max(1, Math.round(next)))
-                          : 1;
-                        setCustomMinutes(minutes);
-                        setDurationMode(`${minutes}min`);
+                        const raw = event.target.value;
+                        setCustomMinutes(raw);
+                        const parsed = Number(raw);
+                        if (raw.trim() && Number.isFinite(parsed) && parsed >= 1) {
+                          setDurationMode(
+                            `${Math.min(180, Math.max(1, Math.round(parsed)))}min`,
+                          );
+                        }
                       }}
                       className="h-11 w-28 bg-background/60 font-mono"
                       aria-label="Minutos personalizados"
@@ -1595,10 +1260,6 @@ export default function Home() {
                     <span className="text-sm text-muted-foreground">minutos desde el saque</span>
                   </div>
                 ) : null}
-                <div className="mt-3 flex gap-2 text-xs leading-5 text-muted-foreground">
-                  <Info className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden="true" />
-                  Arranca en el saque inicial que leemos del marcador (arriba a la izquierda).
-                </div>
               </section>
 
               <section aria-labelledby="stadium-heading">
@@ -1607,7 +1268,7 @@ export default function Home() {
                     Estadio
                   </h2>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Perfil geométrico de la cancha para el ROI de vallas LED.
+                    Perfil de cámara / ROI LED. Calibrar en Configuración.
                   </p>
                 </div>
                 <Select
@@ -1628,22 +1289,6 @@ export default function Home() {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="mt-3">
-                  <StadiumCalibrationSection
-                    onSaved={(savedId) => {
-                      void listStadiums()
-                        .then((items) => {
-                          if (items.length) {
-                            setStadiums(items);
-                            setStadiumId(savedId);
-                          }
-                        })
-                        .catch(() => {
-                          setStadiumId(savedId);
-                        });
-                    }}
-                  />
-                </div>
               </section>
 
               <Tooltip>
@@ -1664,16 +1309,23 @@ export default function Home() {
                 </TooltipTrigger>
                 {(!canSubmit) && (
                   <TooltipContent>
-                    Cargá un video y al menos una marca, o una playlist Lions.
+                    Carga un video y activa al menos una marca, o una playlist Lions.
+                    {durationPreset === "custom" && !customMinutesValid
+                      ? " Indica los minutos personalizados."
+                      : ""}
                   </TooltipContent>
                 )}
               </Tooltip>
+              {connectionError ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {connectionError}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
-        </section>
 
         {recentJobs.length > 0 && (
-          <section aria-labelledby="recent-jobs-heading" className="pb-8">
+          <section aria-labelledby="recent-jobs-heading">
             <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
               <CardHeader className="border-b border-border/60 pb-5">
                 <div className="flex items-start gap-3">
@@ -1685,7 +1337,7 @@ export default function Home() {
                       Análisis recientes
                     </CardTitle>
                     <CardDescription className="mt-1">
-                      Abrí un análisis anterior para ver resultados o exportar CSV.
+                      Abre uno para revisar el catálogo o exportar.
                     </CardDescription>
                   </div>
                 </div>
@@ -1698,215 +1350,203 @@ export default function Home() {
                       ?.nombre ??
                     summary.stadium_id ??
                     "Estadio";
+                  const canDelete =
+                    summary.status === "completed" || summary.status === "error";
                   return (
-                    <button
+                    <div
                       key={summary.id}
-                      type="button"
-                      onClick={() => void loadHistoricalJob(summary)}
-                      className={`flex w-full flex-col gap-3 px-5 py-4 text-left transition-colors hover:bg-muted/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:flex-row sm:items-center sm:justify-between ${
+                      className={`flex items-stretch gap-1 transition-colors hover:bg-muted/25 ${
                         isSelected ? "bg-primary/5" : ""
                       }`}
                     >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-xs text-muted-foreground">
-                            {summary.id.slice(0, 8)}
-                          </span>
-                          <Badge
-                            variant={
-                              summary.status === "completed"
-                                ? "default"
-                                : summary.status === "error"
-                                  ? "destructive"
-                                  : "secondary"
-                            }
-                            className="font-mono text-[10px] uppercase tracking-[0.12em]"
-                          >
-                            {jobStatusLabel(summary.status)}
-                          </Badge>
-                          {isSelected ? (
-                            <Badge variant="outline" className="text-[10px]">
-                              Seleccionado
+                      <button
+                        type="button"
+                        onClick={() => void loadHistoricalJob(summary)}
+                        className="flex min-w-0 flex-1 flex-col gap-3 px-5 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {summary.id.slice(0, 8)}
+                            </span>
+                            <Badge
+                              variant={
+                                summary.status === "completed"
+                                  ? "default"
+                                  : summary.status === "error"
+                                    ? "destructive"
+                                    : "secondary"
+                              }
+                              className="font-mono text-[10px] uppercase tracking-[0.12em]"
+                            >
+                              {jobStatusLabel(summary.status)}
                             </Badge>
+                            {isSelected ? (
+                              <Badge variant="outline" className="text-[10px]">
+                                Seleccionado
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-sm font-medium text-foreground">
+                            {stadiumName}
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {formatJobDate(summary.created_at)}
+                          </p>
+                        </div>
+                        <div className="grid shrink-0 gap-1 text-xs text-muted-foreground sm:text-right">
+                          {summary.status === "completed" ? (
+                            <>
+                              <span>
+                                {summary.summary.brand_count} marca
+                                {summary.summary.brand_count === 1 ? "" : "s"}
+                              </span>
+                              <span className="font-mono tabular-nums">
+                                {formatSeconds(summary.summary.total_exposure_seconds)}{" "}
+                                de exposición
+                              </span>
+                            </>
+                          ) : summary.status === "processing" ||
+                            summary.status === "detecting_kickoff" ? (
+                            <span className="font-mono tabular-nums text-primary">
+                              {Math.round(summary.progress * 100)}%
+                            </span>
                           ) : null}
                         </div>
-                        <p className="mt-1 text-sm font-medium text-foreground">
-                          {stadiumName}
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {formatJobDate(summary.created_at)}
-                        </p>
+                      </button>
+                      <div className="flex items-center pr-3">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="size-9 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+                          disabled={!canDelete}
+                          title={
+                            canDelete
+                              ? "Borrar análisis"
+                              : "Solo se pueden borrar análisis terminados"
+                          }
+                          aria-label={`Borrar análisis ${summary.id.slice(0, 8)}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteTarget(summary);
+                          }}
+                        >
+                          <Trash2 className="size-4" aria-hidden="true" />
+                        </Button>
                       </div>
-                      <div className="grid shrink-0 gap-1 text-xs text-muted-foreground sm:text-right">
-                        {summary.status === "completed" ? (
-                          <>
-                            <span>
-                              {summary.summary.brand_count} marca
-                              {summary.summary.brand_count === 1 ? "" : "s"}
-                            </span>
-                            <span className="font-mono tabular-nums">
-                              {formatSeconds(summary.summary.total_exposure_seconds)}{" "}
-                              de exposición
-                            </span>
-                          </>
-                        ) : summary.status === "processing" ||
-                          summary.status === "detecting_kickoff" ? (
-                          <span className="font-mono tabular-nums text-primary">
-                            {Math.round(summary.progress * 100)}%
-                          </span>
-                        ) : null}
-                      </div>
-                    </button>
+                    </div>
                   );
                 })}
               </CardContent>
             </Card>
           </section>
         )}
-
-        {(connectionError || job) && (
+          </>
+        ) : job ? (
           <section aria-live="polite" className="pb-10">
-            <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
-              <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-border/60 pb-5">
-                <div className="flex gap-3">
-                  <div
-                    className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${
-                      job?.status === "error" || connectionError
-                        ? "bg-destructive/10 text-destructive"
-                        : job?.status === "completed"
-                          ? "bg-primary/10 text-primary"
-                          : "bg-amber-400/10 text-amber-300"
-                    }`}
-                  >
-                    {job?.status === "completed" ? (
-                      <Check className="size-4" aria-hidden="true" />
-                    ) : job?.status === "error" || connectionError ? (
-                      <AlertCircle className="size-4" aria-hidden="true" />
-                    ) : (
-                      <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                    )}
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">
-                      {job?.status === "completed"
-                        ? "Análisis completado"
-                        : job?.status === "error" || connectionError
-                          ? "No pudimos completar el análisis"
-                          : "Análisis en curso"}
-                    </CardTitle>
-                    <CardDescription className="mt-1">
-                      {job?.status === "detecting_kickoff"
-                        ? "Buscando el saque inicial en el marcador…"
-                        : job?.status === "completed"
-                          ? `Analizamos ${formatSeconds(job.result?.analyzed_seconds ?? 0)} de ${
-                              mode === "split" ? "los videos cargados" : "video"
-                            }.`
-                          : job?.status === "error" || connectionError
-                            ? job?.error ?? connectionError
-                            : job?.progress_label ?? "Preparando el análisis…"}
-                    </CardDescription>
-                  </div>
-                </div>
-                {job?.status === "completed" || job?.status === "error" ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="size-9 text-muted-foreground"
-                    onClick={resetJob}
-                    aria-label="Cerrar resultados"
-                  >
-                    <X className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : null}
-              </CardHeader>
-              <CardContent className="space-y-5 pt-6">
-                {job && job.status !== "completed" && job.status !== "error" && (
-                  <div>
-                    <div className="mb-2 flex items-center justify-between font-mono text-xs">
-                      <span className="text-muted-foreground">
-                        {job.status === "detecting_kickoff"
-                          ? "Detectando kickoff"
-                          : "Procesando job"}
-                      </span>
-                      <span className="text-primary">
-                        {Math.round(job.progress * 100)}%
-                      </span>
-                    </div>
-                    <Progress value={job.progress * 100} className="h-2 bg-muted/70" />
-                  </div>
-                )}
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                  {jobStatusLabel(job.status)}
+                  {job.id ? ` · ${job.id.slice(0, 8)}` : ""}
+                </p>
+                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+                  {job.status === "completed"
+                    ? "Revisión de frames"
+                    : job.status === "error"
+                      ? "Análisis fallido"
+                      : "Analizando partido"}
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {job.status === "detecting_kickoff"
+                    ? "Buscando el saque inicial en el marcador…"
+                    : job.status === "completed"
+                      ? `Ventana analizada: ${formatSeconds(job.result?.analyzed_seconds ?? 0)}. Confirma propuestos y asigna lo dudoso.`
+                      : job.status === "error"
+                        ? job.error ?? "No se pudo completar el análisis."
+                        : job.progress_label || "Preparando el análisis…"}
+                </p>
+              </div>
+              {canLeaveWorkspace ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 gap-2"
+                  onClick={resetJob}
+                >
+                  <ArrowLeft className="size-4" aria-hidden="true" />
+                  Nuevo análisis
+                </Button>
+              ) : null}
+            </div>
 
-                {job?.status === "error" || connectionError ? (
+            <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
+              <CardContent className="space-y-6 pt-6">
+                {job.status !== "completed" && job.status !== "error" ? (
+                  <div className="space-y-4">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between font-mono text-xs">
+                        <span className="text-muted-foreground">
+                          {job.status === "detecting_kickoff"
+                            ? "Detectando kickoff"
+                            : "Procesando"}
+                        </span>
+                        <span className="text-primary">
+                          {Math.round(job.progress * 100)}%
+                        </span>
+                      </div>
+                      <Progress value={job.progress * 100} className="h-2 bg-muted/70" />
+                    </div>
+                    <JobPreviewStill jobId={job.id} />
+                    <p className="text-xs text-muted-foreground">
+                      Un partido a la vez en esta pestaña. Si necesitas otro, ábrelo en
+                      una pestaña nueva.
+                    </p>
+                    {job.kickoff ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Kickoff 1T
+                          </p>
+                          <p className="mt-1 font-mono text-sm text-foreground">
+                            {job.kickoff.first_half_video_seconds.toFixed(1)} s
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Kickoff 2T
+                          </p>
+                          <p className="mt-1 font-mono text-sm text-foreground">
+                            {job.kickoff.second_half_video_seconds == null
+                              ? "No detectado"
+                              : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
+                    <CatalogReview jobId={job.id} live readOnly />
+                  </div>
+                ) : null}
+
+                {job.status === "error" ? (
                   <Button type="button" variant="secondary" onClick={resetJob} className="gap-2">
                     <ScanLine className="size-4" aria-hidden="true" />
-                    Volver a intentar
+                    Volver a configurar
                   </Button>
                 ) : null}
 
-                {job?.status === "processing" && resultBrands.length > 0 && (
-                  <div>
-                    <div className="mb-4">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
-                        Lectura parcial
-                      </p>
-                      <h3 className="mt-1 text-lg font-semibold">
-                        Exposición acumulada
-                      </h3>
-                    </div>
-                    <ResultsTable
-                      jobId={job.id}
-                      brands={brands}
-                      resultBrands={resultBrands}
-                    />
-                  </div>
-                )}
-
-                {job?.kickoff && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Kickoff 1T
-                      </p>
-                      <p className="mt-1 font-mono text-sm text-foreground">
-                        {job.kickoff.first_half_video_seconds.toFixed(1)} s
-                      </p>
-                    </div>
-                    <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Kickoff 2T
-                      </p>
-                      <p className="mt-1 font-mono text-sm text-foreground">
-                        {job.kickoff.second_half_video_seconds == null
-                          ? "No detectado"
-                          : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
-                      </p>
-                    </div>
-                    <p className="text-xs text-muted-foreground sm:col-span-2">
-                      {job.kickoff.note}
-                    </p>
-                  </div>
-                )}
-
-                {job?.status === "completed" && (
+                {job.status === "completed" ? (
                   <div className="space-y-8">
+                    <CatalogReview jobId={job.id} />
                     {job.result?.compliance && job.result.compliance.length > 0 ? (
                       <ComplianceTable rows={job.result.compliance} />
                     ) : null}
-                    <div>
-                      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                        <div>
-                          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
-                            Reporte / marcas
-                          </p>
-                          <h3 className="mt-1 text-lg font-semibold">Exposición detectada</h3>
-                          {typeof job.result?.hit_rate === "number" ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Cumplimiento HIT/(HIT+MISS):{" "}
-                              {Math.round(job.result.hit_rate * 100)}%
-                            </p>
-                          ) : null}
-                        </div>
+                    <details className="rounded-xl border border-border/70 bg-background/35">
+                      <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-foreground [&::-webkit-details-marker]:hidden">
+                        Exportar / resumen técnico
+                      </summary>
+                      <div className="space-y-4 border-t border-border/60 px-4 py-4">
                         <div className="flex flex-wrap items-center gap-2">
                           <a
                             href={exportCsvUrl(job.id)}
@@ -1914,49 +1554,90 @@ export default function Home() {
                           >
                             <Button type="button" variant="outline" className="gap-2">
                               <Download className="size-4" aria-hidden="true" />
-                              Exportar CSV
+                              CSV
                             </Button>
                           </a>
-                          {job.result?.report_xlsx_path || job.status === "completed" ? (
-                            <a
-                              href={exportXlsxUrl(job.id)}
-                              download={`informe-${job.id.slice(0, 8)}.xlsx`}
-                            >
-                              <Button type="button" variant="outline" className="gap-2">
-                                <Download className="size-4" aria-hidden="true" />
-                                Informe Excel
-                              </Button>
-                            </a>
-                          ) : null}
-                          <Badge variant="outline" className="gap-2 border-primary/25 text-primary">
-                            <Check className="size-3.5" aria-hidden="true" />
-                            Datos listos
-                          </Badge>
+                          <a
+                            href={exportXlsxUrl(job.id)}
+                            download={`informe-${job.id.slice(0, 8)}.xlsx`}
+                          >
+                            <Button type="button" variant="outline" className="gap-2">
+                              <Download className="size-4" aria-hidden="true" />
+                              Excel pipeline
+                            </Button>
+                          </a>
                         </div>
+                        <ResultsTable
+                          jobId={job.id}
+                          brands={brands}
+                          resultBrands={resultBrands}
+                        />
                       </div>
-                      <ResultsTable
-                        jobId={job.id}
-                        brands={brands}
-                        resultBrands={resultBrands}
-                      />
-                    </div>
+                    </details>
                   </div>
-                )}
+                ) : null}
               </CardContent>
             </Card>
           </section>
-        )}
-
-        {!job && !connectionError && (
-          <div className="flex items-center justify-center gap-2 pb-5 text-center text-xs text-muted-foreground">
-            <Info className="size-3.5" aria-hidden="true" />
-            <span>
-              Subí el video del partido y la lista de marcas. Solo medimos la
-              valla LED a ras de césped.
-            </span>
-          </div>
-        )}
+        ) : null}
       </div>
+
+      {deleteTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-job-title"
+          onClick={() => {
+            if (!deletingJob) setDeleteTarget(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 id="delete-job-title" className="text-base font-semibold">
+              Borrar análisis
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              ¿Seguro que quieres borrar{" "}
+              <span className="font-mono text-foreground">
+                {deleteTarget.id.slice(0, 8)}
+              </span>
+              ? Se elimina el catálogo, frames e informe de ese partido. No se puede
+              deshacer.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {formatJobDate(deleteTarget.created_at)}
+              {deleteTarget.stadium_id ? ` · ${deleteTarget.stadium_id}` : ""}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deletingJob}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="gap-2"
+                onClick={() => void handleDeleteJob()}
+                disabled={deletingJob}
+              >
+                {deletingJob ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Trash2 className="size-4" aria-hidden="true" />
+                )}
+                Borrar
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

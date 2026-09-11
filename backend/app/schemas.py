@@ -116,6 +116,119 @@ class BrandSummary(BaseModel):
     nombre: str
     aliases: list[str] = Field(default_factory=list)
     has_logo: bool = False
+    group_id: str | None = None
+    activo: bool = True
+
+
+class BrandGroupSummary(BaseModel):
+    id: str
+    titulo: str
+    brands: list[BrandSummary] = Field(default_factory=list)
+
+
+class CatalogFrame(BaseModel):
+    id: int
+    half: str
+    frame_idx: int
+    time_seconds: float
+    zone_id: str | None = None
+    posicion: str | None = None
+    ocr_text: str = ""
+    machine_label: str
+    brand_id: str | None = None
+    user_verdict: str | None = None
+    image_url: str
+    crop_image_url: str | None = None
+    has_context: bool = False
+    visual_hash: str | None = None
+    similarity_group: int | None = None
+
+
+class CatalogBrandBucket(BaseModel):
+    brand_id: str
+    name: str
+    frames: list[CatalogFrame] = Field(default_factory=list)
+
+
+class CatalogProgress(BaseModel):
+    positives: int = 0
+    attention: int = 0
+    empty: int = 0
+    confirmed: bool = False
+
+
+class CatalogResponse(BaseModel):
+    job_id: str
+    catalog_confirmed_at: str | None = None
+    discarded_count: int = 0
+    brands: list[CatalogBrandBucket] = Field(default_factory=list)
+    attention: list[CatalogFrame] = Field(default_factory=list)
+    empty: list[CatalogFrame] = Field(default_factory=list)
+    progress: CatalogProgress = Field(default_factory=CatalogProgress)
+
+
+class CatalogFramePatch(BaseModel):
+    action: Literal["false_positive", "assign"]
+    brand_id: str | None = None
+
+
+class ReportFrame(BaseModel):
+    id: int
+    half: str
+    frame_idx: int
+    time_seconds: float
+    posicion: str | None = None
+    ocr_text: str = ""
+    image_url: str
+    crop_image_url: str | None = None
+    has_context: bool = False
+
+
+class ReportSegment(BaseModel):
+    half: str
+    clock_start: str
+    clock_end: str
+    video_seconds_start: float
+    video_seconds_end: float
+    duration_seconds: int
+    posicion: str | None = None
+    frame_count: int = 0
+    sample_frame: ReportFrame
+    frames: list[ReportFrame] = Field(default_factory=list)
+
+
+class ReportBrand(BaseModel):
+    brand_id: str
+    name: str
+    appearances: int = 0
+    total_seconds: int = 0
+    minutes: int = 0
+    seconds: int = 0
+    duration_label: str = "0 s"
+    frame_count: int = 0
+    count_1t: int = 0
+    count_2t: int = 0
+    segments: list[ReportSegment] = Field(default_factory=list)
+
+
+class ReportSummary(BaseModel):
+    brand_count: int = 0
+    appearances: int = 0
+    total_seconds: int = 0
+    duration_label: str = "0 s"
+    minutes: int = 0
+    seconds: int = 0
+
+
+class CatalogReportResponse(BaseModel):
+    job_id: str
+    catalog_confirmed_at: str | None = None
+    confirmed: bool = False
+    stadium_id: str | None = None
+    created_at: str | None = None
+    summary: ReportSummary = Field(default_factory=ReportSummary)
+    brands: list[ReportBrand] = Field(default_factory=list)
+    analyzed_seconds: int | None = None
 
 
 class Kickoff(BaseModel):
@@ -207,6 +320,7 @@ class JobResponse(BaseModel):
     kickoff: Kickoff | None = None
     result: JobResult | None = None
     created_at: str | None = None
+    catalog_confirmed_at: str | None = None
 
 
 class CalibrationPreviews(BaseModel):

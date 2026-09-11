@@ -105,3 +105,17 @@ label,
 select {
   touch-action: manipulation;
 }
+
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+label,
+a[href] {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"],
+[data-disabled] {
+  cursor: not-allowed;
+}

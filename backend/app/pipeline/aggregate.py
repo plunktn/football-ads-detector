@@ -21,6 +21,9 @@ class FrameObservation:
     tipo_panel: str | None = None
     shot: object | None = None
     ambiguous_brand_ids: frozenset[str] = field(default_factory=frozenset)
+    ocr_text: str = ""
+    crop_relpath: str | None = None
+    context_relpath: str | None = None
 
 
 def _clock(seconds: float) -> str:

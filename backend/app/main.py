@@ -9,7 +9,7 @@ from uuid import uuid4
 import cv2
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
@@ -24,16 +24,23 @@ from . import db
 from .domain.stadium import Stadium
 from .pipeline.calibrate import load_sample_frame, persist_stadium, propose_from_frame
 from .pipeline.brands import brands_from_names
+from .job_storage import maybe_purge_job_media, video_paths_from_meta
+from .pipeline.catalog import build_catalog_payload
+from .pipeline.catalog_report import build_catalog_report
 from .pipeline.playlist import parse_playlist, unique_brands
 from .pipeline.video import get_video_info
 from .settings import cors_origins
 from .schemas import (
+    BrandGroupSummary,
     BrandInput,
     BrandSummary,
     CalibrationProposeResponse,
     CalibrationPreviews,
     CalibrationSaveRequest,
     CalibrationSaveResponse,
+    CatalogFramePatch,
+    CatalogReportResponse,
+    CatalogResponse,
     JobConfig,
     JobSummary,
     StadiumSummary,
@@ -180,6 +187,52 @@ async def list_brands() -> list[BrandSummary]:
     return [BrandSummary.model_validate(row) for row in rows]
 
 
+@app.get("/brand-groups")
+async def list_brand_groups() -> list[BrandGroupSummary]:
+    rows = await run_in_threadpool(db.list_brand_groups)
+    return [BrandGroupSummary.model_validate(row) for row in rows]
+
+
+async def _read_titulo(request: Request) -> str:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="titulo es obligatorio.")
+        titulo = payload.get("titulo")
+    else:
+        form = await request.form()
+        titulo = form.get("titulo")
+    if not isinstance(titulo, str) or not titulo.strip():
+        raise HTTPException(status_code=422, detail="titulo es obligatorio.")
+    return titulo.strip()
+
+
+@app.post("/brand-groups", status_code=201)
+async def create_brand_group(request: Request) -> BrandGroupSummary:
+    titulo = await _read_titulo(request)
+    try:
+        group_id = await run_in_threadpool(db.create_brand_group, titulo)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    groups = await run_in_threadpool(db.list_brand_groups)
+    for group in groups:
+        if group["id"] == group_id:
+            return BrandGroupSummary.model_validate(group)
+    return BrandGroupSummary(id=group_id, titulo=titulo, brands=[])
+
+
+@app.delete("/brand-groups/{group_id}", status_code=204)
+async def delete_brand_group(group_id: str) -> Response:
+    try:
+        await run_in_threadpool(db.delete_brand_group, group_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Grupo no encontrado.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
 @app.post("/brands", status_code=201)
 async def create_brand(request: Request) -> BrandSummary:
     form = await request.form()
@@ -192,6 +245,11 @@ async def create_brand(request: Request) -> BrandSummary:
 
     name = name_raw.strip()
     brand_id = _slug(name)
+
+    group_id_raw = form.get("group_id")
+    group_id: str | None = None
+    if isinstance(group_id_raw, str) and group_id_raw.strip():
+        group_id = group_id_raw.strip()
 
     aliases: list[str] = []
     if aliases_raw is not None:
@@ -214,14 +272,94 @@ async def create_brand(request: Request) -> BrandSummary:
         await run_in_threadpool(_save_upload, logo, destination)
         logo_path = str(destination)
 
-    row = await run_in_threadpool(
-        db.upsert_brand,
-        brand_id,
-        name,
-        aliases,
-        logo_path,
-    )
+    try:
+        row = await run_in_threadpool(
+            db.upsert_brand,
+            brand_id,
+            name,
+            aliases,
+            logo_path,
+            group_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return BrandSummary.model_validate(row)
+
+
+@app.patch("/brands/{brand_id}")
+async def patch_brand(brand_id: str, request: Request) -> BrandSummary:
+    existing = await run_in_threadpool(db.get_brand, brand_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Marca no encontrada.")
+
+    content_type = request.headers.get("content-type", "")
+    fields: dict = {}
+    logo = None
+    if "application/json" in content_type:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="JSON inválido.")
+        if "nombre" in payload:
+            fields["nombre"] = payload["nombre"]
+        if "name" in payload and "nombre" not in fields:
+            fields["nombre"] = payload["name"]
+        if "aliases" in payload:
+            aliases = payload["aliases"]
+            if aliases is not None and not isinstance(aliases, list):
+                raise HTTPException(status_code=422, detail="aliases debe ser una lista.")
+            fields["aliases"] = aliases
+        if "activo" in payload and payload["activo"] is not None:
+            fields["activo"] = payload["activo"]
+        if "group_id" in payload and payload["group_id"]:
+            fields["group_id"] = payload["group_id"]
+    else:
+        form = await request.form()
+        if "nombre" in form or "name" in form:
+            name_raw = form.get("nombre") or form.get("name")
+            if isinstance(name_raw, str):
+                fields["nombre"] = name_raw
+        aliases_raw = form.get("aliases")
+        if isinstance(aliases_raw, str) and aliases_raw.strip():
+            try:
+                parsed_aliases = json.loads(aliases_raw)
+                if not isinstance(parsed_aliases, list):
+                    raise ValueError
+                fields["aliases"] = [
+                    str(item).strip() for item in parsed_aliases if str(item).strip()
+                ]
+            except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail="aliases debe ser una lista JSON válida.",
+                ) from exc
+        activo_raw = form.get("activo")
+        if isinstance(activo_raw, str) and activo_raw != "":
+            fields["activo"] = activo_raw.strip() not in {"0", "false", "False"}
+        group_id_raw = form.get("group_id")
+        if isinstance(group_id_raw, str) and group_id_raw.strip():
+            fields["group_id"] = group_id_raw.strip()
+        logo = form.get("logo")
+
+    if _is_upload(logo) and logo.filename:
+        destination = BRANDS_DIR / f"{brand_id}.png"
+        await run_in_threadpool(_save_upload, logo, destination)
+        fields["logo_path"] = str(destination)
+
+    try:
+        row = await run_in_threadpool(db.update_brand, brand_id, **fields)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Marca no encontrada.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return BrandSummary.model_validate(row)
+
+
+@app.delete("/brands/{brand_id}", status_code=204)
+async def delete_brand(brand_id: str) -> Response:
+    deleted = await run_in_threadpool(db.delete_brand, brand_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Marca no encontrada.")
+    return Response(status_code=204)
 
 
 @app.post("/jobs", status_code=201)
@@ -517,6 +655,36 @@ async def list_jobs(limit: int = 50) -> list[JobSummary]:
     return summaries
 
 
+@app.delete("/jobs/{job_id}")
+async def delete_job(job_id: str):
+    record = job_manager.jobs.get(job_id)
+    if record is not None and record.status in {
+        "queued",
+        "detecting_kickoff",
+        "processing",
+    }:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede borrar un análisis en curso. Esperá a que termine.",
+        )
+    row = await run_in_threadpool(db.get_job_row, job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    if row["status"] in {"queued", "detecting_kickoff", "processing"}:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede borrar un análisis en curso. Esperá a que termine.",
+        )
+
+    directory = await run_in_threadpool(db.delete_job, job_id)
+    job_manager.discard(job_id)
+    if directory:
+        job_dir = Path(directory)
+        if job_dir.is_dir():
+            await run_in_threadpool(shutil.rmtree, job_dir, True)
+    return {"job_id": job_id, "deleted": True}
+
+
 @app.get("/jobs/active")
 async def get_active_job():
     """Return the in-memory job so a refreshed browser can resume its view."""
@@ -600,6 +768,158 @@ async def get_job_frame(job_id: str, frame_idx: int, half: str = "1T"):
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=3600"},
     )
+
+
+@app.get("/jobs/{job_id}/catalog")
+async def get_job_catalog(job_id: str) -> CatalogResponse:
+    payload = await run_in_threadpool(build_catalog_payload, job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    return CatalogResponse.model_validate(payload)
+
+
+@app.get("/jobs/{job_id}/catalog/frames/{frame_id}/image")
+async def get_catalog_frame_image(
+    job_id: str,
+    frame_id: int,
+    kind: str = "context",
+):
+    row = await run_in_threadpool(db.get_job_frame, job_id, frame_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Frame no encontrado.")
+    job = await run_in_threadpool(db.get_job_row, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    job_dir = Path(job["directory"]).resolve()
+    wanted = (kind or "context").strip().lower()
+    candidates: list[str] = []
+    if wanted == "crop":
+        if row.get("crop_relpath"):
+            candidates.append(row["crop_relpath"])
+    else:
+        if row.get("context_relpath"):
+            candidates.append(row["context_relpath"])
+        if row.get("crop_relpath"):
+            candidates.append(row["crop_relpath"])
+    for relpath in candidates:
+        image_path = (job_dir / relpath).resolve()
+        if str(image_path).startswith(str(job_dir)) and image_path.is_file():
+            return FileResponse(
+                image_path,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+    raise HTTPException(status_code=404, detail="Imagen de catálogo no encontrada.")
+
+
+@app.get("/jobs/{job_id}/preview.jpg")
+async def get_job_preview(job_id: str):
+    job = await run_in_threadpool(db.get_job_row, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    job_dir = Path(job["directory"]).resolve()
+    preview = (job_dir / "preview.jpg").resolve()
+    if not str(preview).startswith(str(job_dir)) or not preview.is_file():
+        raise HTTPException(status_code=404, detail="Preview no disponible.")
+    return FileResponse(
+        preview,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=60"},
+    )
+
+
+@app.patch("/jobs/{job_id}/catalog/frames/{frame_id}")
+async def patch_catalog_frame(job_id: str, frame_id: int, payload: CatalogFramePatch):
+    job = await run_in_threadpool(db.get_job_row, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    if job["catalog_confirmed_at"]:
+        raise HTTPException(status_code=409, detail="El catálogo ya fue confirmado.")
+    frame = await run_in_threadpool(db.get_job_frame, job_id, frame_id)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="Frame no encontrado.")
+    if payload.action == "false_positive":
+        updated = await run_in_threadpool(
+            db.update_job_frame,
+            frame_id,
+            brand_id=None,
+            user_verdict="false_positive",
+            machine_label="attention",
+        )
+    elif payload.action == "assign":
+        if not payload.brand_id:
+            raise HTTPException(status_code=422, detail="brand_id es obligatorio.")
+        brand = await run_in_threadpool(db.get_brand, payload.brand_id)
+        if brand is None:
+            raise HTTPException(status_code=422, detail="Marca no encontrada.")
+        updated = await run_in_threadpool(
+            db.update_job_frame,
+            frame_id,
+            brand_id=payload.brand_id,
+            user_verdict="assigned",
+            machine_label="positive",
+        )
+    else:
+        raise HTTPException(status_code=422, detail="Acción no válida.")
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Frame no encontrado.")
+    public = {
+        "id": updated["id"],
+        "half": updated["half"],
+        "frame_idx": updated["frame_idx"],
+        "time_seconds": updated["time_seconds"],
+        "zone_id": updated["zone_id"],
+        "posicion": updated["posicion"],
+        "ocr_text": updated["ocr_text"] or "",
+        "machine_label": updated["machine_label"],
+        "brand_id": updated["brand_id"],
+        "user_verdict": updated["user_verdict"],
+        "image_url": f"/jobs/{job_id}/catalog/frames/{frame_id}/image",
+        "crop_image_url": f"/jobs/{job_id}/catalog/frames/{frame_id}/image?kind=crop",
+        "has_context": bool(updated.get("context_relpath")),
+    }
+    return public
+
+
+@app.post("/jobs/{job_id}/catalog/confirm")
+async def confirm_job_catalog(job_id: str):
+    job = await run_in_threadpool(db.get_job_row, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    if job["catalog_confirmed_at"]:
+        raise HTTPException(status_code=409, detail="El catálogo ya fue confirmado.")
+    iso = db._utc_now()
+    await run_in_threadpool(db.set_job_catalog_confirmed, job_id, iso)
+    record = job_manager.jobs.get(job_id)
+    if record is not None:
+        record.catalog_confirmed_at = iso
+        video_paths = list(record.video_paths) or video_paths_from_meta(record.directory)
+        if video_paths:
+            await run_in_threadpool(
+                maybe_purge_job_media,
+                record.directory,
+                video_paths,
+            )
+            record.video_paths = []
+    else:
+        job_dir = Path(job["directory"])
+        video_paths = video_paths_from_meta(job_dir)
+        if video_paths:
+            await run_in_threadpool(maybe_purge_job_media, job_dir, video_paths)
+    return {"job_id": job_id, "catalog_confirmed_at": iso}
+
+
+@app.get("/jobs/{job_id}/report")
+async def get_job_report(job_id: str) -> CatalogReportResponse:
+    payload = await run_in_threadpool(build_catalog_report, job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    if not payload.get("confirmed"):
+        raise HTTPException(
+            status_code=409,
+            detail="Confirma el catálogo antes de ver el informe.",
+        )
+    return CatalogReportResponse.model_validate(payload)
 
 
 @app.get("/jobs/{job_id}/export.csv")
