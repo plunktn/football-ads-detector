@@ -585,7 +585,11 @@ type SubmitJobInput = {
   analysisMode?: AnalysisMode;
   kickoffOffsetSec?: number | null;
   secondHalfStartSec?: number | null;
+  onUploadProgress?: (percent: number) => void;
 };
+
+/** Railway edge can cut long/large uploads; fail earlier with a clear message. */
+const SUBMIT_TIMEOUT_MS = 4 * 60 * 1000;
 
 export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> {
   const form = new FormData();
@@ -628,15 +632,48 @@ export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> 
     }
   }
 
-  const response = await fetch(`${API_URL}/jobs`, {
-    method: "POST",
-    body: form,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/jobs`);
+    xhr.timeout = SUBMIT_TIMEOUT_MS;
+    xhr.responseType = "json";
+
+    xhr.upload.onprogress = (event) => {
+      if (!input.onUploadProgress || !event.lengthComputable || event.total <= 0) {
+        return;
+      }
+      input.onUploadProgress(
+        Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100))),
+      );
+    };
+
+    xhr.onload = () => {
+      const body = (xhr.response ?? {}) as unknown;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as { id: string });
+        return;
+      }
+      reject(new Error(apiErrorMessage(body, "No se pudo crear el análisis.")));
+    };
+
+    xhr.onerror = () => {
+      reject(
+        new Error(
+          "No se pudo conectar con el API (red o CORS). Revisa que el servidor esté arriba e intenta de nuevo. Si el video es muy pesado, prueba un clip más corto.",
+        ),
+      );
+    };
+
+    xhr.ontimeout = () => {
+      reject(
+        new Error(
+          "La subida del video tardó demasiado y se canceló. Prueba un archivo más liviano o una ventana más corta.",
+        ),
+      );
+    };
+
+    xhr.send(form);
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(body.detail ?? "No se pudo crear el análisis.");
-  }
-  return body;
 }
 
 export async function getJob(jobId: string): Promise<Job> {

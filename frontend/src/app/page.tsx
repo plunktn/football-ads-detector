@@ -604,6 +604,7 @@ export default function Home() {
   const [deletingJob, setDeletingJob] = useState(false);
   const [cancellingJob, setCancellingJob] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const stopWatching = useRef<(() => void) | null>(null);
 
@@ -761,6 +762,7 @@ export default function Home() {
   const handleSubmit = async () => {
     if (!canSubmit || isBusy) return;
     setSubmitting(true);
+    setUploadPercent(0);
     setConnectionError(null);
     stopWatching.current?.();
     try {
@@ -792,7 +794,9 @@ export default function Home() {
           secondParsed != null && Number.isFinite(secondParsed)
             ? secondParsed
             : null,
+        onUploadProgress: setUploadPercent,
       });
+      setUploadPercent(null);
       setBrands(enabledBrands);
       const initialJob: Job = {
         id: created.id,
@@ -845,6 +849,7 @@ export default function Home() {
       setConnectionError(message);
     } finally {
       setSubmitting(false);
+      setUploadPercent(null);
     }
   };
 
@@ -1351,7 +1356,11 @@ export default function Home() {
                     ) : (
                       <ScanLine className="size-4" aria-hidden="true" />
                     )}
-                    {submitting ? "Iniciando análisis…" : "Analizar vallas LED"}
+                    {submitting
+                      ? uploadPercent != null && uploadPercent < 100
+                        ? `Subiendo video… ${uploadPercent}%`
+                        : "Iniciando análisis…"
+                      : "Analizar vallas LED"}
                   </Button>
                 </TooltipTrigger>
                 {(!canSubmit) && (
