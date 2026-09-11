@@ -63,3 +63,5 @@ NEXT_PUBLIC_API_URL=https://football-ads-detector-production.up.railway.app
 | UI | `:43123` | Cloudflare Pages |
 | API | `:43124` | Railway |
 | Videos post-job | `KEEP_JOB_VIDEOS=true` opcional | default `false` |
+
+**Roadmap sync:** cloud = config + últimos 50 partidos; video solo local. Ver `docs/LOCAL_CLOUD_SYNC.md`.

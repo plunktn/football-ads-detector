@@ -4,6 +4,9 @@ Para operadores y para un agente (Claude / Cursor): deja UI + API corriendo en
 esta máquina. Los partidos grandes (~5 GB) se analizan **aquí**; el video no
 sale a internet.
 
+Sync futuro (config en cloud, resultados del partido hacia cloud): ver
+`docs/LOCAL_CLOUD_SYNC.md`.
+
 | | URL |
 | --- | --- |
 | UI | http://127.0.0.1:43123 |
@@ -145,6 +148,9 @@ La primera corrida puede tardar: RapidOCR descarga modelos.
 4. Borrar análisis viejos desde “Análisis recientes” para liberar disco.
 
 Full match (~5 GB) es viable en local porque el archivo no se sube a la nube.
+
+Referencias visuales por marca (imágenes + keyframes de video): ver
+[`docs/BRAND_REFS.md`](BRAND_REFS.md). La fase 2 usará esas refs para matching LED.
 
 ---
 
