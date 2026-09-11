@@ -5,12 +5,17 @@ import { useEffect, useState } from "react";
 
 import {
   type BrandGroup,
+  type BrandRef,
+  brandRefImageUrl,
   createBrand,
   createBrandGroup,
   deleteBrand,
   deleteBrandGroup,
+  deleteBrandRef,
   listBrandGroups,
+  listBrandRefs,
   patchBrand,
+  uploadBrandRefs,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +24,141 @@ import { Switch } from "@/components/ui/switch";
 
 function brandAliases(name: string): string[] {
   return [name.replace(/\s+/g, ""), name.toUpperCase()];
+}
+
+function refKindLabel(kind: BrandRef["kind"]): string {
+  switch (kind) {
+    case "logo":
+      return "Logo";
+    case "image":
+      return "Foto";
+    case "video_frame":
+      return "Frame";
+  }
+}
+
+type BrandRefsPanelProps = {
+  brandName: string;
+  refs: BrandRef[] | undefined;
+  loading: boolean;
+  uploading: "images" | "video" | null;
+  deletingRefId: string | null;
+  onUploadImages: (files: File[]) => void;
+  onUploadVideo: (file: File) => void;
+  onDeleteRef: (refId: string) => void;
+};
+
+function BrandRefsPanel({
+  brandName,
+  refs,
+  loading,
+  uploading,
+  deletingRefId,
+  onUploadImages,
+  onUploadVideo,
+  onDeleteRef,
+}: BrandRefsPanelProps) {
+  const items = refs ?? [];
+
+  return (
+    <div className="space-y-3 border-t border-border/60 bg-muted/10 px-3 py-3">
+      {loading ? (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          Cargando referencias…
+        </div>
+      ) : items.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Sin referencias aún. Sube fotos o un video de la pauta LED.
+        </p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+          {items.map((ref) => {
+            const deleting = deletingRefId === ref.id;
+            return (
+              <div
+                key={ref.id}
+                className="group relative overflow-hidden rounded-md border border-border/70 bg-background"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={brandRefImageUrl(ref)}
+                  alt={ref.source_name ?? `${brandName} referencia`}
+                  className="aspect-square w-full object-cover"
+                />
+                <span className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-center text-[10px] text-white">
+                  {refKindLabel(ref.kind)}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0.5 top-0.5 size-7 cursor-pointer bg-black/50 text-white opacity-0 transition-opacity hover:bg-destructive/80 hover:text-white group-hover:opacity-100"
+                  disabled={deleting || uploading !== null}
+                  onClick={() => onDeleteRef(ref.id)}
+                  aria-label={`Eliminar referencia ${refKindLabel(ref.kind)} de ${brandName}`}
+                >
+                  {deleting ? (
+                    <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Trash2 className="size-3.5" aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <label className="flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border/70 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="sr-only"
+            disabled={uploading !== null}
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? []);
+              event.target.value = "";
+              if (files.length) onUploadImages(files);
+            }}
+          />
+          {uploading === "images" ? (
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <UploadCloud className="size-3.5" aria-hidden="true" />
+          )}
+          Fotos
+        </label>
+
+        <label className="flex h-9 cursor-pointer items-center gap-2 rounded-md border border-border/70 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground">
+          <input
+            type="file"
+            accept="video/mp4,video/quicktime,video/webm,video/x-matroska"
+            className="sr-only"
+            disabled={uploading !== null}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) onUploadVideo(file);
+            }}
+          />
+          {uploading === "video" ? (
+            <>
+              <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+              Extrayendo frames…
+            </>
+          ) : (
+            <>
+              <UploadCloud className="size-3.5" aria-hidden="true" />
+              Video de pauta
+            </>
+          )}
+        </label>
+      </div>
+    </div>
+  );
 }
 
 export function BrandGroupsEditor() {
@@ -31,6 +171,13 @@ export function BrandGroupsEditor() {
     Record<string, { name: string; logo?: File; busy: boolean }>
   >({});
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [refsExpanded, setRefsExpanded] = useState<Record<string, boolean>>({});
+  const [brandRefs, setBrandRefs] = useState<Record<string, BrandRef[]>>({});
+  const [refsLoading, setRefsLoading] = useState<Record<string, boolean>>({});
+  const [refsUploading, setRefsUploading] = useState<
+    Record<string, "images" | "video" | null>
+  >({});
+  const [refDeleting, setRefDeleting] = useState<string | null>(null);
 
   const refresh = async () => {
     const items = await listBrandGroups();
@@ -58,6 +205,75 @@ export function BrandGroupsEditor() {
       cancelled = true;
     };
   }, []);
+
+  const loadBrandRefs = async (brandId: string) => {
+    setRefsLoading((current) => ({ ...current, [brandId]: true }));
+    setError(null);
+    try {
+      const refs = await listBrandRefs(brandId);
+      setBrandRefs((current) => ({ ...current, [brandId]: refs }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron cargar las referencias.");
+    } finally {
+      setRefsLoading((current) => ({ ...current, [brandId]: false }));
+    }
+  };
+
+  const toggleRefs = (brandId: string) => {
+    const willExpand = !refsExpanded[brandId];
+    setRefsExpanded((current) => ({ ...current, [brandId]: willExpand }));
+    if (willExpand && brandRefs[brandId] === undefined) {
+      void loadBrandRefs(brandId);
+    }
+  };
+
+  const handleUploadImages = async (brandId: string, files: File[]) => {
+    setRefsUploading((current) => ({ ...current, [brandId]: "images" }));
+    setError(null);
+    try {
+      const created = await uploadBrandRefs(brandId, { images: files });
+      setBrandRefs((current) => ({
+        ...current,
+        [brandId]: [...(current[brandId] ?? []), ...created],
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudieron subir las fotos.");
+    } finally {
+      setRefsUploading((current) => ({ ...current, [brandId]: null }));
+    }
+  };
+
+  const handleUploadVideo = async (brandId: string, file: File) => {
+    setRefsUploading((current) => ({ ...current, [brandId]: "video" }));
+    setError(null);
+    try {
+      const created = await uploadBrandRefs(brandId, { video: file });
+      setBrandRefs((current) => ({
+        ...current,
+        [brandId]: [...(current[brandId] ?? []), ...created],
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo procesar el video.");
+    } finally {
+      setRefsUploading((current) => ({ ...current, [brandId]: null }));
+    }
+  };
+
+  const handleDeleteRef = async (brandId: string, refId: string) => {
+    setRefDeleting(refId);
+    setError(null);
+    try {
+      await deleteBrandRef(brandId, refId);
+      setBrandRefs((current) => ({
+        ...current,
+        [brandId]: (current[brandId] ?? []).filter((ref) => ref.id !== refId),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo eliminar la referencia.");
+    } finally {
+      setRefDeleting(null);
+    }
+  };
 
   const handleCreateGroup = async () => {
     const titulo = groupTitle.trim();
@@ -150,6 +366,16 @@ export function BrandGroupsEditor() {
     setError(null);
     try {
       await deleteBrand(brandId);
+      setBrandRefs((current) => {
+        const next = { ...current };
+        delete next[brandId];
+        return next;
+      });
+      setRefsExpanded((current) => {
+        const next = { ...current };
+        delete next[brandId];
+        return next;
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo eliminar la marca.");
@@ -195,7 +421,7 @@ export function BrandGroupsEditor() {
         <Button
           type="button"
           variant="secondary"
-          className="h-11 gap-2 px-4"
+          className="h-11 cursor-pointer gap-2 px-4"
           onClick={() => void handleCreateGroup()}
           disabled={!groupTitle.trim() || creatingGroup}
         >
@@ -235,7 +461,7 @@ export function BrandGroupsEditor() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-9 text-muted-foreground hover:text-destructive"
+                    className="size-9 cursor-pointer text-muted-foreground hover:text-destructive"
                     disabled={rowBusy === `group-${group.id}`}
                     onClick={(event) => {
                       event.preventDefault();
@@ -253,59 +479,99 @@ export function BrandGroupsEditor() {
                       {group.brands.map((brand) => {
                         const activo = brand.activo !== false;
                         const busy = rowBusy === brand.id;
+                        const expanded = refsExpanded[brand.id] ?? false;
+                        const refCount = brandRefs[brand.id]?.length;
                         return (
                           <div
                             key={brand.id}
-                            className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors ${
+                            className={`overflow-hidden rounded-lg border transition-colors ${
                               activo
                                 ? "border-primary/30 bg-primary/5"
                                 : "border-border/70 bg-muted/20"
                             }`}
                           >
-                            <span
-                              className={`min-w-0 flex-1 truncate text-sm font-medium ${
-                                activo ? "text-foreground" : "text-muted-foreground"
-                              }`}
-                            >
-                              {brand.nombre}
-                            </span>
-                            <Switch
-                              checked={activo}
-                              disabled={busy}
-                              onCheckedChange={(checked) =>
-                                void handleToggleActivo(brand.id, checked)
-                              }
-                              aria-label={`${activo ? "Desactivar" : "Activar"} ${brand.nombre}`}
-                            />
-                            <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground">
-                              <Input
-                                type="file"
-                                accept="image/png,image/jpeg,image/webp"
-                                className="sr-only"
+                            <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                              <span
+                                className={`min-w-0 flex-1 truncate text-sm font-medium ${
+                                  activo ? "text-foreground" : "text-muted-foreground"
+                                }`}
+                              >
+                                {brand.nombre}
+                              </span>
+                              <Switch
+                                checked={activo}
                                 disabled={busy}
-                                onChange={(event) => {
-                                  void handleLogo(brand.id, event.target.files?.[0]);
-                                  event.target.value = "";
-                                }}
+                                onCheckedChange={(checked) =>
+                                  void handleToggleActivo(brand.id, checked)
+                                }
+                                aria-label={`${activo ? "Desactivar" : "Activar"} ${brand.nombre}`}
                               />
-                              <UploadCloud className="size-3.5" aria-hidden="true" />
-                              {brand.has_logo ? "Logo cargado" : "Logo"}
-                            </label>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-9 text-muted-foreground hover:text-destructive"
-                              onClick={() => void handleDeleteBrand(brand.id)}
-                              disabled={busy}
-                              aria-label={`Eliminar ${brand.nombre}`}
-                            >
-                              {busy ? (
-                                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                              ) : (
-                                <Trash2 className="size-4" aria-hidden="true" />
-                              )}
-                            </Button>
+                              <label className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-transparent px-2 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground">
+                                <Input
+                                  type="file"
+                                  accept="image/png,image/jpeg,image/webp"
+                                  className="sr-only"
+                                  disabled={busy}
+                                  onChange={(event) => {
+                                    void handleLogo(brand.id, event.target.files?.[0]);
+                                    event.target.value = "";
+                                  }}
+                                />
+                                <UploadCloud className="size-3.5" aria-hidden="true" />
+                                {brand.has_logo ? "Logo cargado" : "Logo"}
+                              </label>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 cursor-pointer gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                onClick={() => toggleRefs(brand.id)}
+                                aria-expanded={expanded}
+                                aria-label={`${expanded ? "Ocultar" : "Mostrar"} referencias de ${brand.nombre}${
+                                  typeof refCount === "number" ? ` (${refCount})` : ""
+                                }`}
+                              >
+                                <span className="inline-flex items-center gap-1.5 leading-none">
+                                  Referencias
+                                  {typeof refCount === "number" && refCount > 0 ? (
+                                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded bg-muted px-1 font-mono text-[10px] tabular-nums leading-none text-muted-foreground">
+                                      {refCount}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <ChevronDown
+                                  className={`size-3.5 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+                                  aria-hidden="true"
+                                />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-9 cursor-pointer text-muted-foreground hover:text-destructive"
+                                onClick={() => void handleDeleteBrand(brand.id)}
+                                disabled={busy}
+                                aria-label={`Eliminar ${brand.nombre}`}
+                              >
+                                {busy ? (
+                                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                                ) : (
+                                  <Trash2 className="size-4" aria-hidden="true" />
+                                )}
+                              </Button>
+                            </div>
+                            {expanded ? (
+                              <BrandRefsPanel
+                                brandName={brand.nombre}
+                                refs={brandRefs[brand.id]}
+                                loading={refsLoading[brand.id] ?? false}
+                                uploading={refsUploading[brand.id] ?? null}
+                                deletingRefId={refDeleting}
+                                onUploadImages={(files) => void handleUploadImages(brand.id, files)}
+                                onUploadVideo={(file) => void handleUploadVideo(brand.id, file)}
+                                onDeleteRef={(refId) => void handleDeleteRef(brand.id, refId)}
+                              />
+                            ) : null}
                           </div>
                         );
                       })}
@@ -364,7 +630,7 @@ export function BrandGroupsEditor() {
                     <Button
                       type="button"
                       variant="secondary"
-                      className="h-10 gap-2"
+                      className="h-10 cursor-pointer gap-2"
                       onClick={() => void handleAddBrand(group.id)}
                       disabled={!draft.name.trim() || draft.busy}
                     >

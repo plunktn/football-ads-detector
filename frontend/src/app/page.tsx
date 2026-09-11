@@ -25,6 +25,7 @@ import {
 
 import { CatalogReview } from "@/components/catalog-review";
 import { FrameLightbox } from "@/components/frame-lightbox";
+import { ModalOverlay } from "@/components/modal-overlay";
 import {
   type Brand,
   type BrandGroup,
@@ -1665,62 +1666,53 @@ export default function Home() {
         ) : null}
       </div>
 
-      {deleteTarget ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-job-title"
-          onClick={() => {
-            if (!deletingJob) setDeleteTarget(null);
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
+      <ModalOverlay
+        open={Boolean(deleteTarget)}
+        onClose={() => {
+          if (!deletingJob) setDeleteTarget(null);
+        }}
+        labelledBy="delete-job-title"
+      >
+        <h3 id="delete-job-title" className="text-base font-semibold">
+          Borrar análisis
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          ¿Seguro que quieres borrar{" "}
+          <span className="font-mono text-foreground">
+            {deleteTarget?.id.slice(0, 8)}
+          </span>
+          ? Se elimina el catálogo, frames e informe de ese partido. No se puede
+          deshacer.
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {deleteTarget ? formatJobDate(deleteTarget.created_at) : ""}
+          {deleteTarget?.stadium_id ? ` · ${deleteTarget.stadium_id}` : ""}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setDeleteTarget(null)}
+            disabled={deletingJob}
           >
-            <h3 id="delete-job-title" className="text-base font-semibold">
-              Borrar análisis
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              ¿Seguro que quieres borrar{" "}
-              <span className="font-mono text-foreground">
-                {deleteTarget.id.slice(0, 8)}
-              </span>
-              ? Se elimina el catálogo, frames e informe de ese partido. No se puede
-              deshacer.
-            </p>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {formatJobDate(deleteTarget.created_at)}
-              {deleteTarget.stadium_id ? ` · ${deleteTarget.stadium_id}` : ""}
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setDeleteTarget(null)}
-                disabled={deletingJob}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                className="gap-2"
-                onClick={() => void handleDeleteJob()}
-                disabled={deletingJob}
-              >
-                {deletingJob ? (
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Trash2 className="size-4" aria-hidden="true" />
-                )}
-                Borrar
-              </Button>
-            </div>
-          </div>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            className="gap-2"
+            onClick={() => void handleDeleteJob()}
+            disabled={deletingJob}
+          >
+            {deletingJob ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 className="size-4" aria-hidden="true" />
+            )}
+            Borrar
+          </Button>
         </div>
-      ) : null}
+      </ModalOverlay>
     </main>
   );
 }

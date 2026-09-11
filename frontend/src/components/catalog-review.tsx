@@ -1,11 +1,13 @@
 "use client";
 
-import { Check, FileText, LoaderCircle, ZoomIn } from "lucide-react";
+import { ArrowUp, Check, FileText, FolderOpen, LoaderCircle, ZoomIn } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { FrameLightbox } from "@/components/frame-lightbox";
+import { ModalOverlay } from "@/components/modal-overlay";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -28,6 +30,16 @@ import {
   resolveApiUrl,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+/** Viewport FAB — portal to body so Card filter/backdrop-blur cannot trap `fixed`. */
+function CatalogFabPortal({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
 
 function frameSrc(jobId: string, frame: CatalogFrame) {
   if (frame.image_url) return resolveApiUrl(frame.image_url);
@@ -221,6 +233,7 @@ export function CatalogReview({
   const [assignBrandId, setAssignBrandId] = useState("");
   const [emptyOpen, setEmptyOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
   const [lightbox, setLightbox] = useState<{
     src: string;
     cropSrc?: string | null;
@@ -239,15 +252,6 @@ export function CatalogReview({
     },
     [jobId],
   );
-
-  useEffect(() => {
-    if (!confirmOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) setConfirmOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirmOpen, busy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,6 +312,7 @@ export function CatalogReview({
       setConfirmOpen(false);
       setSelectedPositive([]);
       setSelectedAttention([]);
+      setSuccessOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo confirmar el catálogo.");
     } finally {
@@ -344,8 +349,12 @@ export function CatalogReview({
     );
   }
 
+  const scrollToId = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
-    <div className="space-y-8">
+    <div id="catalog-top" className="relative space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold">
@@ -412,8 +421,17 @@ export function CatalogReview({
           </p>
         ) : (
           catalog.brands.map((brand) => (
-            <div key={brand.brand_id} className="space-y-2">
-              <p className="text-sm font-medium text-foreground">{brand.name}</p>
+            <div
+              key={brand.brand_id}
+              id={`brand-${brand.brand_id}`}
+              className="scroll-mt-4 space-y-3 rounded-xl border border-border/80 bg-card/40 p-4 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+                <h5 className="text-sm font-semibold text-foreground">{brand.name}</h5>
+                <Badge variant="secondary" className="font-mono text-[10px]">
+                  {brand.frames.length} frame{brand.frames.length === 1 ? "" : "s"}
+                </Badge>
+              </div>
               {brand.frames.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">
                   Este grupo no tiene propuestos
@@ -441,7 +459,11 @@ export function CatalogReview({
         )}
       </section>
 
-      <section aria-labelledby="catalog-uncatalogued-heading" className="space-y-3">
+      <section
+        id="uncatalogued"
+        aria-labelledby="catalog-uncatalogued-heading"
+        className="scroll-mt-4 space-y-3 rounded-xl border border-border/80 bg-muted/20 p-4"
+      >
         <h4 id="catalog-uncatalogued-heading" className="text-sm font-semibold">
           No catalogados
         </h4>
@@ -589,46 +611,152 @@ export function CatalogReview({
         </Tabs>
       </section>
 
-      {confirmOpen
-        ? (
-            <div
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="confirm-catalog-title"
-              onClick={() => !busy && setConfirmOpen(false)}
-            >
-              <div
-                className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
-                onClick={(event) => event.stopPropagation()}
+      <CatalogFabPortal>
+        <div
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-[90] flex flex-col items-end gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+          aria-label="Acciones rápidas de catálogo"
+        >
+          {!locked && selectedAttention.length > 0 ? (
+            <div className="pointer-events-auto flex max-w-[min(100%,28rem)] flex-wrap items-center justify-end gap-2 rounded-2xl border border-border bg-card/95 p-2 shadow-2xl backdrop-blur-md">
+              <Select
+                value={assignBrandId}
+                onValueChange={(value) => {
+                  if (value) setAssignBrandId(value);
+                }}
+                disabled={busy || catalog.brands.length === 0}
               >
-                <h3 id="confirm-catalog-title" className="text-base font-semibold">
-                  Confirmar catálogo
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Confirmás el catálogo de este partido. El informe usa solo positivos y
-                  asignaciones; los falsos positivos y lo no asignado quedan fuera.
-                </p>
-                <div className="mt-5 flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setConfirmOpen(false)}
-                    disabled={busy}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button type="button" onClick={() => void handleConfirm()} disabled={busy}>
-                    {busy ? (
-                      <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                    ) : null}
-                    Confirmar
-                  </Button>
-                </div>
-              </div>
+                <SelectTrigger className="h-10 min-w-36 bg-background/80 sm:min-w-44">
+                  <SelectValue placeholder="Marca" />
+                </SelectTrigger>
+                <SelectContent className="z-[110]">
+                  {catalog.brands.map((brand) => (
+                    <SelectItem key={brand.brand_id} value={brand.brand_id}>
+                      {brand.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                className="h-10 cursor-pointer gap-2"
+                disabled={busy || !assignBrandId}
+                onClick={() =>
+                  void runPatches(selectedAttention, {
+                    action: "assign",
+                    brand_id: assignBrandId,
+                  })
+                }
+              >
+                {busy ? (
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Check className="size-4" aria-hidden="true" />
+                )}
+                Asignar ({selectedAttention.length})
+              </Button>
             </div>
-          )
-        : null}
+          ) : null}
+          <div className="pointer-events-auto flex flex-col items-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-10 cursor-pointer gap-2 shadow-lg"
+              onClick={() => scrollToId("catalog-top")}
+            >
+              <ArrowUp className="size-4" aria-hidden="true" />
+              Arriba
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-10 cursor-pointer gap-2 shadow-lg"
+              onClick={() => scrollToId("uncatalogued")}
+            >
+              <FolderOpen className="size-4" aria-hidden="true" />
+              No catalogados
+            </Button>
+            {!confirmed && !locked ? (
+              <Button
+                type="button"
+                size="sm"
+                className="h-10 cursor-pointer gap-2 shadow-lg"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy}
+              >
+                <Check className="size-4" aria-hidden="true" />
+                Confirmar catálogo
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </CatalogFabPortal>
+
+      <ModalOverlay
+        open={confirmOpen}
+        onClose={() => {
+          if (!busy) setConfirmOpen(false);
+        }}
+        labelledBy="confirm-catalog-title"
+      >
+        <h3 id="confirm-catalog-title" className="text-base font-semibold">
+          Confirmar catálogo
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Confirmás el catálogo de este partido. El informe usa solo positivos y
+          asignaciones; los falsos positivos y lo no asignado quedan fuera.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setConfirmOpen(false)}
+            disabled={busy}
+          >
+            Cancelar
+          </Button>
+          <Button type="button" onClick={() => void handleConfirm()} disabled={busy}>
+            {busy ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            ) : null}
+            Confirmar
+          </Button>
+        </div>
+      </ModalOverlay>
+
+      <ModalOverlay
+        open={successOpen}
+        onClose={() => setSuccessOpen(false)}
+        labelledBy="catalog-success-title"
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+            <Check className="size-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h3 id="catalog-success-title" className="text-base font-semibold">
+              Catálogo confirmado
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              El informe ya está listo con las marcas y tiempos de este partido.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={() => setSuccessOpen(false)}>
+            Seguir aquí
+          </Button>
+          <Link
+            href={`/informe?job=${encodeURIComponent(jobId)}`}
+            className={cn(buttonVariants(), "h-10 gap-2")}
+            onClick={() => setSuccessOpen(false)}
+          >
+            <FileText className="size-4" aria-hidden="true" />
+            Ver informe
+          </Link>
+        </div>
+      </ModalOverlay>
 
       {lightbox ? (
         <FrameLightbox

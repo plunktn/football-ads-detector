@@ -157,6 +157,17 @@ export type BrandGroup = {
   brands: BrandSummary[];
 };
 
+export type BrandRefKind = "logo" | "image" | "video_frame";
+
+export type BrandRef = {
+  id: string;
+  brand_id: string;
+  kind: BrandRefKind;
+  source_name?: string | null;
+  image_url: string;
+  created_at?: string;
+};
+
 export type CatalogMachineLabel = "positive" | "attention" | "empty";
 
 export type CatalogFrame = {
@@ -406,6 +417,58 @@ export async function deleteBrand(brandId: string): Promise<void> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(apiErrorMessage(body, "No se pudo eliminar la marca."));
+  }
+}
+
+export function brandRefImageUrl(ref: BrandRef): string {
+  return resolveApiUrl(ref.image_url);
+}
+
+export async function listBrandRefs(brandId: string): Promise<BrandRef[]> {
+  const response = await fetch(
+    `${API_URL}/brands/${encodeURIComponent(brandId)}/refs`,
+    { cache: "no-store" },
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudieron cargar las referencias."));
+  }
+  return body ?? [];
+}
+
+export async function uploadBrandRefs(
+  brandId: string,
+  input: { images?: File[]; video?: File },
+): Promise<BrandRef[]> {
+  const form = new FormData();
+  if (input.images?.length) {
+    for (const image of input.images) {
+      form.append("images", image);
+    }
+  }
+  if (input.video) {
+    form.append("video", input.video);
+  }
+  const response = await fetch(
+    `${API_URL}/brands/${encodeURIComponent(brandId)}/refs`,
+    { method: "POST", body: form },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudieron subir las referencias."));
+  }
+  return (body as { refs?: BrandRef[] }).refs ?? [];
+}
+
+export async function deleteBrandRef(brandId: string, refId: string): Promise<void> {
+  const response = await fetch(
+    `${API_URL}/brands/${encodeURIComponent(brandId)}/refs/${encodeURIComponent(refId)}`,
+    { method: "DELETE" },
+  );
+  if (response.status === 204) return;
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo eliminar la referencia."));
   }
 }
 
