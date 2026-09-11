@@ -13,6 +13,7 @@ JobStatus = Literal[
     "detecting_kickoff",
     "processing",
     "completed",
+    "cancelled",
     "error",
 ]
 JobMode = Literal["single", "split"]

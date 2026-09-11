@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
@@ -8,6 +9,7 @@ from typing import AsyncIterator
 from . import db
 from .config.stadiums import load_stadium_profile
 from .domain.stadium import CameraProfile
+from .exceptions import JobCancelled
 from .pipeline.brands import generate_aliases
 from .pipeline.playlist import parse_playlist
 from .pipeline.report import write_commercial_report
@@ -27,7 +29,8 @@ from .schemas import (
 
 
 logger = logging.getLogger(__name__)
-TERMINAL_STATUSES = {"completed", "error"}
+TERMINAL_STATUSES = {"completed", "error", "cancelled"}
+IN_PROGRESS_STATUSES = {"queued", "detecting_kickoff", "processing"}
 
 
 @dataclass
@@ -48,6 +51,7 @@ class JobRecord:
     playlist_path: Path | None = None
     events: list[dict] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict]] = field(default_factory=set)
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def response(self) -> JobResponse:
         return JobResponse(
@@ -144,6 +148,26 @@ class JobManager:
         record = self.jobs.pop(job_id, None)
         if self.active_job_id == job_id:
             self.active_job_id = None
+        return record
+
+    async def request_cancel(self, job_id: str) -> JobRecord:
+        """Stop a queued or running job cooperatively."""
+        record = self.get(job_id)
+        if record.status in TERMINAL_STATUSES:
+            raise ValueError("El análisis ya terminó.")
+        if record.status not in IN_PROGRESS_STATUSES:
+            raise ValueError("El análisis ya terminó.")
+
+        record.cancel_event.set()
+        if record.status == "queued":
+            await self._publish(
+                record,
+                status="cancelled",
+                progress=record.progress,
+                label="Análisis detenido",
+                error="Detenido por el usuario",
+            )
+            await self._maybe_start_next()
         return record
 
     async def recover_from_db(self) -> None:
@@ -361,6 +385,7 @@ class JobManager:
                     if record.playlist_path and record.playlist_path.is_file()
                     else None
                 ),
+                should_cancel=record.cancel_event.is_set,
             )
         )
 
@@ -426,12 +451,15 @@ class JobManager:
                     record.config.stadium_id or "ligaecuabet",
                 )
                 camera_profile = None
+            if record.cancel_event.is_set():
+                raise JobCancelled("Detenido por el usuario")
             kickoff = await asyncio.to_thread(
                 detect_kickoffs,
                 record.video_paths,
                 record.config.mode,
                 record.config.duration_mode,
                 camera_profile=camera_profile,
+                should_cancel=record.cancel_event.is_set,
             )
             kickoff = apply_kickoff_overrides(
                 kickoff,
@@ -445,6 +473,8 @@ class JobManager:
                 kickoff.second_half_video_seconds,
                 kickoff.note,
             )
+            if record.cancel_event.is_set():
+                raise JobCancelled("Detenido por el usuario")
             await self._publish(
                 record,
                 status="processing",
@@ -507,6 +537,24 @@ class JobManager:
                 label="Análisis completado",
                 kickoff=kickoff,
                 partial_brands=result.brands,
+            )
+        except JobCancelled:
+            logger.info("Job %s cancelled by user", record.id)
+            await asyncio.to_thread(
+                db.update_job,
+                job_id=record.id,
+                status="cancelled",
+                progress=record.progress,
+                progress_label="Análisis detenido",
+                error="Detenido por el usuario",
+            )
+            await self._publish(
+                record,
+                status="cancelled",
+                progress=record.progress,
+                label="Análisis detenido",
+                kickoff=record.kickoff,
+                error="Detenido por el usuario",
             )
         except Exception as exc:  # keep failures visible through the API/SSE
             logger.exception("Job %s failed", record.id)

@@ -8,6 +8,7 @@ import {
   History,
   LoaderCircle,
   ScanLine,
+  Square,
   Trash2,
   UploadCloud,
   ZoomIn,
@@ -37,6 +38,7 @@ import {
   type Stadium,
   type VerificationStatus,
   DOUBTFUL_STATUSES,
+  cancelJob,
   deleteJob,
   exportCsvUrl,
   exportXlsxUrl,
@@ -140,6 +142,8 @@ function jobStatusLabel(status: Job["status"]) {
       return "Procesando";
     case "completed":
       return "Completado";
+    case "cancelled":
+      return "Detenido";
     case "error":
       return "Error";
   }
@@ -598,6 +602,7 @@ export default function Home() {
   const [recentJobs, setRecentJobs] = useState<JobSummary[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<JobSummary | null>(null);
   const [deletingJob, setDeletingJob] = useState(false);
+  const [cancellingJob, setCancellingJob] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const stopWatching = useRef<(() => void) | null>(null);
@@ -615,7 +620,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (job?.status === "completed" || job?.status === "error") {
+    if (
+      job?.status === "completed" ||
+      job?.status === "error" ||
+      job?.status === "cancelled"
+    ) {
       refreshRecentJobs();
     }
   }, [job?.status]);
@@ -856,7 +865,11 @@ export default function Home() {
           })),
         );
       }
-      if (loaded.status !== "completed" && loaded.status !== "error") {
+      if (
+        loaded.status !== "completed" &&
+        loaded.status !== "error" &&
+        loaded.status !== "cancelled"
+      ) {
         attachToJob(loaded);
       }
     } catch (error) {
@@ -905,6 +918,34 @@ export default function Home() {
     }
   };
 
+  const handleCancelJob = async () => {
+    if (!job?.id || cancellingJob) return;
+    setCancellingJob(true);
+    setConnectionError(null);
+    try {
+      const updated = await cancelJob(job.id);
+      setJob((current) => {
+        const base = current ? { ...current, ...updated } : updated;
+        if (base.status === "cancelled") return base;
+        return {
+          ...base,
+          status: "cancelled",
+          progress_label: "Análisis detenido",
+          error: base.error ?? "Detenido por el usuario",
+        };
+      });
+      refreshRecentJobs();
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo detener el análisis.",
+      );
+    } finally {
+      setCancellingJob(false);
+    }
+  };
+
   const resultBrands =
     job?.result?.brands ??
     (job?.status === "processing"
@@ -913,7 +954,13 @@ export default function Home() {
 
   const workspaceMode = Boolean(job);
   const canLeaveWorkspace =
-    job?.status === "completed" || job?.status === "error";
+    job?.status === "completed" ||
+    job?.status === "error" ||
+    job?.status === "cancelled";
+  const canStopJob =
+    job?.status === "queued" ||
+    job?.status === "detecting_kickoff" ||
+    job?.status === "processing";
 
   return (
     <main className="min-h-dvh overflow-x-hidden bg-background">
@@ -1351,7 +1398,9 @@ export default function Home() {
                     summary.stadium_id ??
                     "Estadio";
                   const canDelete =
-                    summary.status === "completed" || summary.status === "error";
+                    summary.status === "completed" ||
+                    summary.status === "error" ||
+                    summary.status === "cancelled";
                   return (
                     <div
                       key={summary.id}
@@ -1373,7 +1422,8 @@ export default function Home() {
                               variant={
                                 summary.status === "completed"
                                   ? "default"
-                                  : summary.status === "error"
+                                  : summary.status === "error" ||
+                                      summary.status === "cancelled"
                                     ? "destructive"
                                     : "secondary"
                               }
@@ -1456,7 +1506,9 @@ export default function Home() {
                     ? "Revisión de frames"
                     : job.status === "error"
                       ? "Análisis fallido"
-                      : "Analizando partido"}
+                      : job.status === "cancelled"
+                        ? "Análisis detenido"
+                        : "Analizando partido"}
                 </h1>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {job.status === "detecting_kickoff"
@@ -1465,25 +1517,47 @@ export default function Home() {
                       ? `Ventana analizada: ${formatSeconds(job.result?.analyzed_seconds ?? 0)}. Confirma propuestos y asigna lo dudoso.`
                       : job.status === "error"
                         ? job.error ?? "No se pudo completar el análisis."
-                        : job.progress_label || "Preparando el análisis…"}
+                        : job.status === "cancelled"
+                          ? job.error ?? "Detenido por el usuario."
+                          : job.progress_label || "Preparando el análisis…"}
                 </p>
               </div>
-              {canLeaveWorkspace ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 gap-2"
-                  onClick={resetJob}
-                >
-                  <ArrowLeft className="size-4" aria-hidden="true" />
-                  Nuevo análisis
-                </Button>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {canStopJob ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="h-10 gap-2"
+                    disabled={cancellingJob}
+                    onClick={() => void handleCancelJob()}
+                  >
+                    {cancellingJob ? (
+                      <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Square className="size-3.5 fill-current" aria-hidden="true" />
+                    )}
+                    {cancellingJob ? "Deteniendo…" : "Detener"}
+                  </Button>
+                ) : null}
+                {canLeaveWorkspace ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 gap-2"
+                    onClick={resetJob}
+                  >
+                    <ArrowLeft className="size-4" aria-hidden="true" />
+                    Nuevo análisis
+                  </Button>
+                ) : null}
+              </div>
             </div>
 
             <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
               <CardContent className="space-y-6 pt-6">
-                {job.status !== "completed" && job.status !== "error" ? (
+                {job.status !== "completed" &&
+                job.status !== "error" &&
+                job.status !== "cancelled" ? (
                   <div className="space-y-4">
                     <div>
                       <div className="mb-2 flex items-center justify-between font-mono text-xs">
@@ -1529,7 +1603,7 @@ export default function Home() {
                   </div>
                 ) : null}
 
-                {job.status === "error" ? (
+                {job.status === "error" || job.status === "cancelled" ? (
                   <Button type="button" variant="secondary" onClick={resetJob} className="gap-2">
                     <ScanLine className="size-4" aria-hidden="true" />
                     Volver a configurar

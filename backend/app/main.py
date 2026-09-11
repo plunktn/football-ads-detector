@@ -665,7 +665,7 @@ async def delete_job(job_id: str):
     }:
         raise HTTPException(
             status_code=409,
-            detail="No se puede borrar un análisis en curso. Esperá a que termine.",
+            detail="No se puede borrar un análisis en curso. Deténlo o espera a que termine.",
         )
     row = await run_in_threadpool(db.get_job_row, job_id)
     if row is None:
@@ -673,7 +673,7 @@ async def delete_job(job_id: str):
     if row["status"] in {"queued", "detecting_kickoff", "processing"}:
         raise HTTPException(
             status_code=409,
-            detail="No se puede borrar un análisis en curso. Esperá a que termine.",
+            detail="No se puede borrar un análisis en curso. Deténlo o espera a que termine.",
         )
 
     directory = await run_in_threadpool(db.delete_job, job_id)
@@ -683,6 +683,17 @@ async def delete_job(job_id: str):
         if job_dir.is_dir():
             await run_in_threadpool(shutil.rmtree, job_dir, True)
     return {"job_id": job_id, "deleted": True}
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    try:
+        record = await job_manager.request_cancel(job_id)
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Job no encontrado.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return record.response()
 
 
 @app.get("/jobs/active")

@@ -57,6 +57,44 @@ class JobQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(summaries), 2)
         self.assertEqual({row["id"] for row in summaries}, {"job-1", "job-2"})
 
+    async def test_request_cancel_queued_job(self) -> None:
+        manager = JobManager(self._jobs_root)
+        with patch.object(manager, "_maybe_start_next", new_callable=AsyncMock):
+            record = manager.add_job(**self._make_job_args("job-cancel"))
+
+        cancelled = await manager.request_cancel("job-cancel")
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertTrue(record.cancel_event.is_set())
+        self.assertEqual(cancelled.error, "Detenido por el usuario")
+        row = db.get_job_row("job-cancel")
+        self.assertEqual(row["status"], "cancelled")
+
+    async def test_request_cancel_rejects_terminal(self) -> None:
+        manager = JobManager(self._jobs_root)
+        with patch.object(manager, "_maybe_start_next", new_callable=AsyncMock):
+            record = manager.add_job(**self._make_job_args("job-done"))
+        record.status = "completed"
+        with self.assertRaises(ValueError):
+            await manager.request_cancel("job-done")
+
+
+class RunAnalysisCancelTests(unittest.TestCase):
+    def test_run_analysis_respects_should_cancel(self) -> None:
+        from app.exceptions import JobCancelled
+        from app.pipeline.run import run_analysis
+        from app.schemas import Kickoff
+
+        with self.assertRaises(JobCancelled):
+            run_analysis(
+                [],
+                mode="single",
+                duration_mode="1min",
+                kickoff=Kickoff(first_half_video_seconds=0.0, note="test"),
+                brands=[BrandInput(id="nett", name="NETT")],
+                debug_dir=Path(tempfile.mkdtemp()),
+                should_cancel=lambda: True,
+            )
+
 
 class JobPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:

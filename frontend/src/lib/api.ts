@@ -6,6 +6,7 @@ export type JobStatus =
   | "detecting_kickoff"
   | "processing"
   | "completed"
+  | "cancelled"
   | "error";
 
 export type JobMode = "single" | "split";
@@ -670,6 +671,18 @@ export async function deleteJob(jobId: string): Promise<void> {
   }
 }
 
+export async function cancelJob(jobId: string): Promise<Job> {
+  const response = await fetch(
+    `${API_URL}/jobs/${encodeURIComponent(jobId)}/cancel`,
+    { method: "POST" },
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo detener el análisis."));
+  }
+  return body as Job;
+}
+
 export function exportCsvUrl(jobId: string): string {
   return `${API_URL}/jobs/${encodeURIComponent(jobId)}/export.csv`;
 }
@@ -699,7 +712,7 @@ export function getFrameUrl(
 }
 
 function isTerminal(status: JobStatus) {
-  return status === "completed" || status === "error";
+  return status === "completed" || status === "error" || status === "cancelled";
 }
 
 export function watchJob(

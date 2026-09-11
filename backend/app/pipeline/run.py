@@ -10,6 +10,7 @@ from pathlib import Path
 import cv2
 
 from ..domain.stadium import CameraProfile
+from ..exceptions import JobCancelled
 from ..schemas import BrandInput, BrandResult, Kickoff, parse_duration_seconds
 from .aggregate import FrameObservation, aggregate_observations
 from .brands import match_brand_ids, match_fixed_brand_ids, prepare_brands
@@ -207,12 +208,15 @@ def run_analysis(
     camera_profile: CameraProfile | None = None,
     analysis_mode: str = "discovery",
     playlist_slots: Sequence[PlaylistSlot] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> AnalysisOutput:
     """Analyze selected windows at one sample per second.
 
     discovery: 1 fps scan of LED + fixed bands.
     playlist_verify: same scan, then hit/miss each 1T/2T playlist slot.
     """
+    if should_cancel is not None and should_cancel():
+        raise JobCancelled("Detenido por el usuario")
     windows = build_analysis_windows(
         video_paths,
         mode=mode,
@@ -233,6 +237,8 @@ def run_analysis(
         try:
             t = window.start_seconds
             while t < window.end_seconds - 1e-9:
+                if should_cancel is not None and should_cancel():
+                    raise JobCancelled("Detenido por el usuario")
                 ok, frame, frame_idx = read_frame_at_seconds(cap, t)
                 if not ok or frame is None:
                     logger.warning(

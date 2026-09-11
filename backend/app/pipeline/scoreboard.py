@@ -1,12 +1,19 @@
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
 
 from ..domain.stadium import CameraProfile
+from ..exceptions import JobCancelled
 from ..schemas import Kickoff
 from .ocr import read_image_text
 from .video import get_video_info, read_frame_at_seconds
+
+
+def _check_cancel(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise JobCancelled("Detenido por el usuario")
 
 
 def scoreboard_crop(frame, profile: CameraProfile | None = None):
@@ -52,6 +59,7 @@ def _scan_for_kickoff(
     start_seconds: float = 0.0,
     max_seconds: float = 900.0,
     camera_profile: CameraProfile | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> float | None:
     """Scan up to ~15 minutes for the first low scoreboard clock.
 
@@ -74,6 +82,7 @@ def _scan_for_kickoff(
         end_seconds = min(info.duration_seconds, start_seconds + max_seconds)
         t = max(0.0, start_seconds)
         while t < end_seconds:
+            _check_cancel(should_cancel)
             ok, frame, _ = read_frame_at_seconds(cap, t)
             if ok and frame is not None:
                 text = read_scoreboard_text(frame, camera_profile)
@@ -91,6 +100,7 @@ def _scan_for_kickoff(
                     best = None
                     rt = refine_start
                     while rt < refine_end:
+                        _check_cancel(should_cancel)
                         ok_r, frame_r, _ = read_frame_at_seconds(cap, rt)
                         if ok_r and frame_r is not None:
                             text_r = read_scoreboard_text(frame_r, camera_profile)
@@ -121,6 +131,7 @@ def _detect_second_half_single(
     first_half_seconds: float,
     duration_seconds: float,
     camera_profile: CameraProfile | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> float | None:
     """Find a 2T reset in a complete-match recording."""
     if duration_seconds < 40 * 60:
@@ -133,6 +144,7 @@ def _detect_second_half_single(
     try:
         t = start
         while t < duration_seconds:
+            _check_cancel(should_cancel)
             ok, frame, _ = read_frame_at_seconds(cap, t)
             if ok and frame is not None:
                 text = read_scoreboard_text(frame, camera_profile)
@@ -193,6 +205,7 @@ def detect_kickoffs(
     mode: str,
     duration_mode: str = "full",
     camera_profile: CameraProfile | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> Kickoff:
     """Detect kickoff positions for single or split uploads.
 
@@ -207,11 +220,17 @@ def detect_kickoffs(
 
     if mode == "split" and len(video_paths) >= 2:
         first = _scan_for_kickoff(
-            video_paths[0], expected_half="1T", camera_profile=camera_profile
+            video_paths[0],
+            expected_half="1T",
+            camera_profile=camera_profile,
+            should_cancel=should_cancel,
         )
         second = (
             _scan_for_kickoff(
-                video_paths[1], expected_half="2T", camera_profile=camera_profile
+                video_paths[1],
+                expected_half="2T",
+                camera_profile=camera_profile,
+                should_cancel=should_cancel,
             )
             if need_second_half
             else None
@@ -236,7 +255,10 @@ def detect_kickoffs(
 
     path = video_paths[0]
     first = _scan_for_kickoff(
-        path, expected_half="1T", camera_profile=camera_profile
+        path,
+        expected_half="1T",
+        camera_profile=camera_profile,
+        should_cancel=should_cancel,
     )
     first_value = first if first is not None else 0.0
     second = None
@@ -246,7 +268,11 @@ def detect_kickoffs(
         duration = 0.0
     if need_second_half and first is not None:
         second = _detect_second_half_single(
-            path, first, duration, camera_profile=camera_profile
+            path,
+            first,
+            duration,
+            camera_profile=camera_profile,
+            should_cancel=should_cancel,
         )
 
     if first is None and second is None:
