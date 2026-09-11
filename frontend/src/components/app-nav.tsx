@@ -3,8 +3,10 @@
 import { ScanLine } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { getSyncStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
@@ -14,6 +16,21 @@ const LINKS = [
 
 export function AppNav() {
   const pathname = usePathname();
+  const [syncReady, setSyncReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSyncStatus()
+      .then((status) => {
+        if (!cancelled) setSyncReady(Boolean(status.cloud_configured));
+      })
+      .catch(() => {
+        if (!cancelled) setSyncReady(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/60 bg-background/90 backdrop-blur-md">
@@ -57,7 +74,7 @@ export function AppNav() {
           className="hidden gap-2 border-primary/25 bg-primary/5 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-primary sm:inline-flex"
         >
           <span className="size-1.5 rounded-full bg-primary shadow-[0_0_8px_currentColor]" />
-          CPU / local
+          {syncReady ? "CPU / SYNC" : "CPU / local"}
         </Badge>
       </div>
     </header>

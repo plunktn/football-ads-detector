@@ -209,6 +209,50 @@ export function resolveApiUrl(pathOrUrl: string): string {
   return `${API_URL}${path}`;
 }
 
+export type SyncStatus = {
+  cloud_configured: boolean;
+  cloud_api_url: boolean;
+  server_accepts_sync: boolean;
+};
+
+export type SyncPullResult = {
+  ok: boolean;
+  counts?: {
+    stadiums?: number;
+    camera_profiles?: number;
+    brand_groups?: number;
+    brands?: number;
+    brand_refs?: number;
+    files?: number;
+  };
+};
+
+export async function getSyncStatus(): Promise<SyncStatus> {
+  const response = await fetch(`${API_URL}/sync/status`);
+  if (!response.ok) {
+    throw new Error("No se pudo leer el estado de sync.");
+  }
+  return (await response.json()) as SyncStatus;
+}
+
+export async function syncPull(): Promise<SyncPullResult> {
+  const response = await fetch(`${API_URL}/sync/pull`, { method: "POST" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Pull desde cloud falló.");
+  }
+  return (await response.json()) as SyncPullResult;
+}
+
+export async function syncPush(): Promise<{ ok: boolean }> {
+  const response = await fetch(`${API_URL}/sync/push`, { method: "POST" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Push a cloud falló.");
+  }
+  return (await response.json()) as { ok: boolean };
+}
+
 export type CameraProfilePayload = {
   id: string;
   variante: "default" | "dia" | "noche";

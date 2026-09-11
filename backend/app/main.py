@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import shutil
+import zipfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,7 +31,16 @@ from .pipeline.catalog import build_catalog_payload
 from .pipeline.catalog_report import build_catalog_report
 from .pipeline.playlist import parse_playlist, unique_brands
 from .pipeline.video import get_video_info
-from .settings import cors_origins
+from .settings import cloud_sync_enabled, cors_origins, sync_token
+from .sync_config import (
+    SYNC_HEADER,
+    export_config_zip,
+    import_config_zip,
+    maybe_pull_from_cloud,
+    maybe_push_to_cloud,
+    pull_from_cloud,
+    push_to_cloud,
+)
 from .schemas import (
     BrandGroupSummary,
     BrandInput,
@@ -88,6 +98,88 @@ job_manager = JobManager(DATA_ROOT)
 async def startup() -> None:
     await run_in_threadpool(db.ensure_db)
     await job_manager.recover_from_db()
+    await run_in_threadpool(maybe_pull_from_cloud)
+
+
+def _require_sync_token(request: Request) -> None:
+    expected = sync_token()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="SYNC_TOKEN no configurado en este servidor.",
+        )
+    got = request.headers.get(SYNC_HEADER) or request.headers.get(SYNC_HEADER.lower())
+    if got != expected:
+        raise HTTPException(status_code=401, detail="Token de sync inválido.")
+
+
+async def _after_config_mutation() -> None:
+    await run_in_threadpool(maybe_push_to_cloud)
+
+
+@app.get("/sync/status")
+async def sync_status() -> dict:
+    return {
+        "cloud_configured": cloud_sync_enabled(),
+        "cloud_api_url": bool(cloud_sync_enabled()),
+        "server_accepts_sync": bool(sync_token()),
+    }
+
+
+@app.get("/sync/config")
+async def sync_config_export(request: Request) -> Response:
+    _require_sync_token(request)
+    payload = await run_in_threadpool(export_config_zip)
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=config-sync.zip"},
+    )
+
+
+@app.put("/sync/config")
+async def sync_config_import(request: Request) -> dict:
+    _require_sync_token(request)
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=422, detail="ZIP vacío.")
+    try:
+        counts = await run_in_threadpool(import_config_zip, body, True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=422, detail="ZIP inválido.") from exc
+    return {"ok": True, "counts": counts}
+
+
+@app.post("/sync/pull")
+async def sync_pull_local() -> dict:
+    if not cloud_sync_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Configura CLOUD_API_URL y SYNC_TOKEN en el backend local.",
+        )
+    try:
+        return await run_in_threadpool(pull_from_cloud)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pull falló: {exc}") from exc
+
+
+@app.post("/sync/push")
+async def sync_push_local() -> dict:
+    if not cloud_sync_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Configura CLOUD_API_URL y SYNC_TOKEN en el backend local.",
+        )
+    try:
+        return await run_in_threadpool(push_to_cloud)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Push falló: {exc}") from exc
 
 
 def _slug(value: str) -> str:
@@ -196,6 +288,7 @@ async def save_calibration(payload: CalibrationSaveRequest) -> CalibrationSaveRe
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     summary = await run_in_threadpool(persist_stadium, stadium)
+    await _after_config_mutation()
     return CalibrationSaveResponse.model_validate(summary)
 
 
@@ -236,7 +329,9 @@ async def create_brand_group(request: Request) -> BrandGroupSummary:
     groups = await run_in_threadpool(db.list_brand_groups)
     for group in groups:
         if group["id"] == group_id:
+            await _after_config_mutation()
             return BrandGroupSummary.model_validate(group)
+    await _after_config_mutation()
     return BrandGroupSummary(id=group_id, titulo=titulo, brands=[])
 
 
@@ -248,6 +343,7 @@ async def delete_brand_group(group_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Grupo no encontrado.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _after_config_mutation()
     return Response(status_code=204)
 
 
@@ -308,6 +404,7 @@ async def create_brand(request: Request) -> BrandSummary:
             logo_path,
             logo.filename if _is_upload(logo) else None,
         )
+    await _after_config_mutation()
     return BrandSummary.model_validate(row)
 
 
@@ -383,6 +480,7 @@ async def patch_brand(brand_id: str, request: Request) -> BrandSummary:
             fields["logo_path"],
             logo.filename if _is_upload(logo) and logo.filename else None,
         )
+    await _after_config_mutation()
     return BrandSummary.model_validate(row)
 
 
@@ -476,6 +574,7 @@ async def create_brand_refs(
             if temp_video.is_file():
                 temp_video.unlink()
 
+    await _after_config_mutation()
     return BrandRefsCreateResponse(refs=created)
 
 
@@ -509,6 +608,7 @@ async def delete_brand_ref(brand_id: str, ref_id: str) -> Response:
     image_path = Path(deleted["path"])
     if image_path.is_file():
         await run_in_threadpool(image_path.unlink)
+    await _after_config_mutation()
     return Response(status_code=204)
 
 
@@ -517,6 +617,7 @@ async def delete_brand(brand_id: str) -> Response:
     deleted = await run_in_threadpool(db.delete_brand, brand_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Marca no encontrada.")
+    await _after_config_mutation()
     return Response(status_code=204)
 
 

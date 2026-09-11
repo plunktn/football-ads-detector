@@ -21,6 +21,11 @@ Proyecto creado en workspace **Plunkton's Projects** (separado de `plunkton-crm`
 | --- | --- |
 | `KEEP_JOB_VIDEOS` | `false` (default; libera disco tras cada job) |
 | `CORS_ORIGINS` | `https://football-ads-detector.pages.dev` |
+| `SYNC_TOKEN` | Secreto compartido con operadores locales (header `X-Sync-Token`) |
+
+**No** configures `CLOUD_API_URL` en Railway (solo en backends locales).
+
+Sync config: `docs/LOCAL_CLOUD_SYNC.md`.
 
 6. Plan con **≥ 2 GB RAM** recomendado (OpenCV + OCR).
 7. Dominio público Railway → copiar URL para el front.

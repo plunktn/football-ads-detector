@@ -6,6 +6,7 @@ fastapi==0.141.1
 flatbuffers==25.12.19
 h11==0.16.0
 httptools==0.8.0
+httpx==0.28.1
 idna==3.19
 numpy==2.4.6
 onnxruntime==1.29.0

@@ -1,4 +1,13 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Local operator: backend/.env or repo-root .env
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_BACKEND_DIR / ".env")
+load_dotenv(_REPO_ROOT / ".env")
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -29,3 +38,17 @@ def cors_origins() -> list[str]:
             seen.add(origin)
             origins.append(origin)
     return origins
+
+
+def sync_token() -> str | None:
+    raw = (os.getenv("SYNC_TOKEN") or "").strip()
+    return raw or None
+
+
+def cloud_api_url() -> str | None:
+    raw = (os.getenv("CLOUD_API_URL") or "").strip().rstrip("/")
+    return raw or None
+
+
+def cloud_sync_enabled() -> bool:
+    return bool(cloud_api_url() and sync_token())

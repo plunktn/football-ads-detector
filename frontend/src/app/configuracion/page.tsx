@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
+
 import { BrandGroupsEditor } from "@/components/brand-groups-editor";
+import { ConfigSyncPanel } from "@/components/config-sync-panel";
 import { StadiumCalibrationSection } from "@/components/stadium-calibration";
 import {
   Card,
@@ -11,6 +14,8 @@ import {
 } from "@/components/ui/card";
 
 export default function ConfiguracionPage() {
+  const [editorKey, setEditorKey] = useState(0);
+
   return (
     <main className="min-h-dvh overflow-x-hidden bg-background">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_0%,oklch(0.32_0.12_145/0.12),transparent_32%),radial-gradient(circle_at_85%_10%,oklch(0.35_0.1_75/0.09),transparent_25%)]" />
@@ -25,6 +30,8 @@ export default function ConfiguracionPage() {
           </p>
         </div>
 
+        <ConfigSyncPanel onSynced={() => setEditorKey((value) => value + 1)} />
+
         <Card className="border-border/80 bg-card/80 shadow-xl shadow-black/15 backdrop-blur-xl">
           <CardHeader className="border-b border-border/60 pb-5">
             <CardTitle className="text-lg">Marcas</CardTitle>
@@ -34,7 +41,7 @@ export default function ConfiguracionPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-6">
-            <BrandGroupsEditor />
+            <BrandGroupsEditor key={editorKey} />
           </CardContent>
         </Card>
 

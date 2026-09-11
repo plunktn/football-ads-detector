@@ -1,59 +1,57 @@
 # Local + cloud: fuente de verdad y análisis
 
-**Decisión:** cloud guarda config y resultados; el video se analiza en local; sync sube artefactos del partido (no el MP4).
+**Decisión:** cloud (Railway) guarda la config compartida; el video se analiza en local; sync de **marcas/refs/estadios** ya está implementado. Push de jobs/informes = fase siguiente.
 
-## Quick path (fase 2)
+## Quick path (config sync — listo)
 
-1. Operador abre **prod** → edita marcas / refs / estadios (única fuente de verdad).
-2. Local **pull** de esa config antes de analizar.
-3. Local corre el partido (video nunca sube).
-4. Tras confirmar catálogo, local **push** del job a cloud.
-5. Cloud retiene últimos **50** jobs; borrar un partido borra toda su data.
+1. Railway tiene `SYNC_TOKEN`.
+2. Local: `backend/.env` con `CLOUD_API_URL` + el mismo `SYNC_TOKEN`.
+3. Al arrancar la API local hace **pull** de cloud.
+4. Editas marcas en local **o** en [pages.dev](https://football-ads-detector.pages.dev); en local los cambios hacen **push** automático.
+5. En Configuración: botones **Bajar de cloud** / **Subir a cloud**.
+6. Video del partido: solo disco local (nunca sube).
 
 ## Roles
 
 | Pieza | Dónde vive | Quién edita |
 |-------|------------|-------------|
-| Marcas, aliases, brand refs, estadios | Cloud | Solo prod (UI cloud) |
+| Marcas, aliases, brand refs, estadios | Cloud (verdad) + cache local | Local o prod; sync con token |
 | Video del partido | Disco local | Nunca a cloud |
-| Catálogo confirmado + informe | Local → cloud | Push al terminar |
-| Crops / thumbs del catálogo | Local → cloud | Push al terminar (artefactos chicos) |
-| Updates de refs nacidos del partido | Local → cloud | Push si aportan a la biblioteca |
+| Catálogo / informe del job | Local (por ahora) | Fase jobs: push a cloud |
 
-## Retención y borrado
+## API
+
+| Ruta | Uso |
+|------|-----|
+| `GET /sync/config` | ZIP config (header `X-Sync-Token`) |
+| `PUT /sync/config` | Aplica ZIP (token) |
+| `GET /sync/status` | Si el local tiene cloud configurado |
+| `POST /sync/pull` | Local → descarga cloud |
+| `POST /sync/push` | Local → sube a cloud |
+
+## Retención jobs (pendiente)
 
 | Regla | Detalle |
 |-------|---------|
 | Tope | Últimos **50** partidos en cloud |
-| Al superar 50 | Rotar el más viejo (cascada) |
-| Borrar partido | Elimina job + catálogo + crops/thumbs + metadatos de ese id |
-| Video crudo | No se almacena en cloud |
+| Borrar partido | Cascada de artefactos del job |
+| Video crudo | No en cloud |
 
-## Qué no hacer (anti-pisones)
+## Qué no hacer
 
-- No editar marcas/refs/estadios en local como verdad (evita overwrite al sync).
-- No merge “last write wins” en config.
-- No subir el MP4 del partido a Railway/Pages.
+- No subir el MP4 del partido.
+- No compartir `SYNC_TOKEN` en el repo ni en chats públicos.
+- No poner `CLOUD_API_URL` en Railway apuntando a sí mismo.
 
-Si local está offline: trabaja con la última config bajada; el push de resultados espera red.
+## Checklist
 
-## Alcance por fases
-
-| Fase | Entrega |
-|------|---------|
-| **1 (ahora)** | Brand refs + UX catálogo en prod (sin sync híbrido) |
-| **2** | API sync: `GET /sync/config`, `POST /sync/jobs/{id}` (artefactos), retención 50, delete cascada |
-| **3** | UI local: “Sincronizar config” / “Publicar partido”; matching híbrido con refs (ver `BRAND_REFS.md`) |
-
-## Checklist fase 2
-
-- [ ] Config cloud-only documentada en UI local (solo lectura o “abre prod para editar”)
-- [ ] Pull config idempotente
-- [ ] Push job: informe + catálogo + crops + refs nuevas opcionales
-- [ ] Retención 50 + delete cascada
-- [ ] Tope de tamaño por job (rechazar push si crops > umbral)
-- [ ] Auth mínima del sync (token operador)
+- [x] Sync config ZIP + token
+- [x] Pull al arrancar local
+- [x] Push tras CRUD config
+- [x] UI Configuración sync
+- [ ] Push de jobs / retención 50
+- [ ] Matching híbrido con refs (`BRAND_REFS.md`)
 
 ## Next step
 
-Implementar fase 2 tras validar fase 1 en prod. Detalle de matching con refs: `docs/BRAND_REFS.md`. Deploy: `docs/DEPLOY.md`.
+Jobs → cloud. Matching: `docs/BRAND_REFS.md`. Deploy: `docs/DEPLOY.md`.

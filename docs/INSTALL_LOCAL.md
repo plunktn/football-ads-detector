@@ -2,10 +2,7 @@
 
 Para operadores y para un agente (Claude / Cursor): deja UI + API corriendo en
 esta máquina. Los partidos grandes (~5 GB) se analizan **aquí**; el video no
-sale a internet.
-
-Sync futuro (config en cloud, resultados del partido hacia cloud): ver
-`docs/LOCAL_CLOUD_SYNC.md`.
+sale a internet. Las marcas se sincronizan con producción (ver Sync con cloud).
 
 | | URL |
 | --- | --- |
@@ -22,13 +19,46 @@ Clona el repo plunktn/football-ads-detector (o usa el checkout que ya tengo),
 configura el entorno e inicia backend + frontend en local siguiendo
 docs/INSTALL_LOCAL.md al pie de la letra.
 
+IMPORTANTE — sync con producción (marcas compartidas):
+1) Crea backend/.env con exactamente:
+   CLOUD_API_URL=https://football-ads-detector-production.up.railway.app
+   SYNC_TOKEN=<el token que te pasó el operador; no lo inventes>
+2) Reinicia con ./start.sh (la API hace pull de cloud al arrancar).
+3) Abre http://localhost:43123/configuracion — debe verse el panel Sync
+   y el badge "CPU / SYNC". Si hace falta, pulsa "Bajar de cloud".
+4) Verifica que el grupo ligaecuabet (u otro) tenga las mismas marcas que
+   https://football-ads-detector.pages.dev/configuracion
+
 Al terminar debes verificar:
 1) curl -sf http://127.0.0.1:43124/health → {"ok":true}
-2) La UI responde en http://127.0.0.1:43123
-3) Dime las URLs y cómo parar con ./stop.sh
+2) curl -sf http://127.0.0.1:43124/sync/status → cloud_configured true
+3) La UI responde en http://127.0.0.1:43123
+4) Dime las URLs y cómo parar con ./stop.sh
 
-No despliegues a Railway ni toques producción.
+No despliegues a Railway ni toques variables de producción.
+El video del partido se analiza solo en local; no lo subas a cloud.
 ```
+
+---
+
+## Sync con cloud
+
+Para que marcas/refs/estadios coincidan con producción:
+
+1. El operador te pasa un `SYNC_TOKEN` por canal seguro (no va en git).
+2. Crea `backend/.env`:
+
+```bash
+CLOUD_API_URL=https://football-ads-detector-production.up.railway.app
+SYNC_TOKEN=pega-el-token-aqui
+```
+
+3. `./start.sh` — al arrancar, la API baja la config de Railway.
+4. En **Configuración**: **Bajar de cloud** / **Subir a cloud**.
+5. Si creas o editas marcas en local, se suben solas a cloud (best-effort).
+6. UI pública: https://football-ads-detector.pages.dev
+
+Detalle: `docs/LOCAL_CLOUD_SYNC.md`.
 
 ---
 
