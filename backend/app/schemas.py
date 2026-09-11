@@ -127,6 +127,22 @@ class BrandGroupSummary(BaseModel):
     brands: list[BrandSummary] = Field(default_factory=list)
 
 
+BrandRefKind = Literal["logo", "image", "video_frame"]
+
+
+class BrandRefSummary(BaseModel):
+    id: str
+    brand_id: str
+    kind: BrandRefKind
+    source_name: str | None = None
+    image_url: str
+    created_at: str
+
+
+class BrandRefsCreateResponse(BaseModel):
+    refs: list[BrandRefSummary] = Field(default_factory=list)
+
+
 class CatalogFrame(BaseModel):
     id: int
     half: str

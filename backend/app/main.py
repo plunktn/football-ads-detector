@@ -25,6 +25,7 @@ from .domain.stadium import Stadium
 from .pipeline.calibrate import load_sample_frame, persist_stadium, propose_from_frame
 from .pipeline.brands import brands_from_names
 from .job_storage import maybe_purge_job_media, video_paths_from_meta
+from .pipeline.brand_refs import extract_video_keyframes, save_image_bytes
 from .pipeline.catalog import build_catalog_payload
 from .pipeline.catalog_report import build_catalog_report
 from .pipeline.playlist import parse_playlist, unique_brands
@@ -33,6 +34,8 @@ from .settings import cors_origins
 from .schemas import (
     BrandGroupSummary,
     BrandInput,
+    BrandRefSummary,
+    BrandRefsCreateResponse,
     BrandSummary,
     CalibrationProposeResponse,
     CalibrationPreviews,
@@ -63,6 +66,7 @@ ALLOWED_CALIBRATION_EXTENSIONS = ALLOWED_VIDEO_EXTENSIONS | {
     ".bmp",
     ".webp",
 }
+ALLOWED_BRAND_REF_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 app = FastAPI(
     title="Football Ads Detector API",
@@ -102,6 +106,20 @@ def _save_upload(upload: UploadFile, destination: Path) -> None:
     upload.file.seek(0)
     with destination.open("wb") as output:
         shutil.copyfileobj(upload.file, output)
+
+
+def _brand_ref_image_suffix(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".png":
+        return ".png"
+    return ".jpg"
+
+
+async def _require_brand(brand_id: str) -> dict:
+    brand = await run_in_threadpool(db.get_brand, brand_id)
+    if brand is None:
+        raise HTTPException(status_code=404, detail="Marca no encontrada.")
+    return brand
 
 
 def _video_destination(directory: Path, field: str, upload: UploadFile) -> Path:
@@ -283,6 +301,13 @@ async def create_brand(request: Request) -> BrandSummary:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if logo_path:
+        await run_in_threadpool(
+            db.replace_logo_brand_ref,
+            brand_id,
+            logo_path,
+            logo.filename if _is_upload(logo) else None,
+        )
     return BrandSummary.model_validate(row)
 
 
@@ -351,7 +376,140 @@ async def patch_brand(brand_id: str, request: Request) -> BrandSummary:
         raise HTTPException(status_code=404, detail="Marca no encontrada.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if fields.get("logo_path"):
+        await run_in_threadpool(
+            db.replace_logo_brand_ref,
+            brand_id,
+            fields["logo_path"],
+            logo.filename if _is_upload(logo) and logo.filename else None,
+        )
     return BrandSummary.model_validate(row)
+
+
+@app.get("/brands/{brand_id}/refs")
+async def list_brand_refs(brand_id: str) -> list[BrandRefSummary]:
+    await _require_brand(brand_id)
+    rows = await run_in_threadpool(db.list_brand_refs, brand_id)
+    return [BrandRefSummary.model_validate(row) for row in rows]
+
+
+@app.post("/brands/{brand_id}/refs", status_code=201)
+async def create_brand_refs(
+    brand_id: str,
+    request: Request,
+) -> BrandRefsCreateResponse:
+    await _require_brand(brand_id)
+    form = await request.form()
+    image_uploads = [
+        upload
+        for upload in form.getlist("images")
+        if _is_upload(upload) and upload.filename
+    ]
+    video_upload = form.get("video")
+    has_video = _is_upload(video_upload) and video_upload.filename
+
+    if not image_uploads and not has_video:
+        raise HTTPException(
+            status_code=422,
+            detail="Sube al menos una imagen (images) o un video (video).",
+        )
+
+    refs_dir = db.brand_refs_dir(brand_id)
+    created: list[BrandRefSummary] = []
+
+    for upload in image_uploads:
+        suffix = Path(upload.filename or "").suffix.lower()
+        if suffix not in ALLOWED_BRAND_REF_IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=422,
+                detail="Las imágenes deben ser JPG, PNG o WebP.",
+            )
+        ref_id = uuid4().hex
+        destination = refs_dir / f"{ref_id}{_brand_ref_image_suffix(upload.filename or '')}"
+        data = await upload.read()
+        try:
+            await run_in_threadpool(save_image_bytes, data, destination)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        row = await run_in_threadpool(
+            db.insert_brand_ref,
+            ref_id,
+            brand_id,
+            "image",
+            str(destination),
+            upload.filename,
+        )
+        created.append(BrandRefSummary.model_validate(row))
+
+    if has_video:
+        suffix = Path(video_upload.filename or "").suffix.lower()
+        if suffix not in ALLOWED_VIDEO_EXTENSIONS:
+            raise HTTPException(
+                status_code=422,
+                detail="El video debe ser MP4, MOV, MKV o WebM.",
+            )
+        temp_video = refs_dir / f"_tmp_{uuid4().hex}{suffix}"
+        try:
+            await run_in_threadpool(_save_upload, video_upload, temp_video)
+            keyframes = await run_in_threadpool(
+                extract_video_keyframes,
+                temp_video,
+                refs_dir,
+            )
+            if not keyframes:
+                raise HTTPException(
+                    status_code=422,
+                    detail="No se pudieron extraer frames del video.",
+                )
+            source_name = video_upload.filename
+            for ref_id, frame_path in keyframes:
+                row = await run_in_threadpool(
+                    db.insert_brand_ref,
+                    ref_id,
+                    brand_id,
+                    "video_frame",
+                    str(frame_path),
+                    source_name,
+                )
+                created.append(BrandRefSummary.model_validate(row))
+        finally:
+            if temp_video.is_file():
+                temp_video.unlink()
+
+    return BrandRefsCreateResponse(refs=created)
+
+
+@app.get("/brands/{brand_id}/refs/{ref_id}/image")
+async def get_brand_ref_image(brand_id: str, ref_id: str):
+    ref = await run_in_threadpool(db.get_brand_ref, brand_id, ref_id)
+    if ref is None:
+        raise HTTPException(status_code=404, detail="Referencia no encontrada.")
+    image_path = Path(ref["path"]).resolve()
+    refs_root = db.brand_refs_dir(brand_id).resolve()
+    brands_root = BRANDS_DIR.resolve()
+    allowed_roots = {refs_root, brands_root}
+    if not any(str(image_path).startswith(str(root)) for root in allowed_roots):
+        raise HTTPException(status_code=404, detail="Imagen no encontrada.")
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Imagen no encontrada.")
+    media_type = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(
+        image_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.delete("/brands/{brand_id}/refs/{ref_id}", status_code=204)
+async def delete_brand_ref(brand_id: str, ref_id: str) -> Response:
+    await _require_brand(brand_id)
+    deleted = await run_in_threadpool(db.delete_brand_ref, brand_id, ref_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="Referencia no encontrada.")
+    image_path = Path(deleted["path"])
+    if image_path.is_file():
+        await run_in_threadpool(image_path.unlink)
+    return Response(status_code=204)
 
 
 @app.delete("/brands/{brand_id}", status_code=204)

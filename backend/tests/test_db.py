@@ -289,6 +289,7 @@ class SchemaMigrationTests(unittest.TestCase):
         self.assertIn("catalog_confirmed_at", job_cols)
         self.assertIn("brand_groups", tables)
         self.assertIn("job_frames", tables)
+        self.assertIn("brand_refs", tables)
         with db.get_connection() as conn:
             frame_cols = db._table_columns(conn, "job_frames")
         self.assertIn("context_relpath", frame_cols)

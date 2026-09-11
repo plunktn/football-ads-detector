@@ -147,6 +147,19 @@ def init_db() -> None:
                 ON exposure_segments(job_id);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_job_frames_lookup
                 ON job_frames(job_id, half, frame_idx, zone_id);
+
+            CREATE TABLE IF NOT EXISTS brand_refs (
+                id TEXT PRIMARY KEY,
+                brand_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                path TEXT NOT NULL,
+                source_name TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_brand_refs_brand_id
+                ON brand_refs(brand_id);
             """
         )
         _migrate_schema(conn)
@@ -288,6 +301,19 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_job_frames_lookup
             ON job_frames(job_id, half, frame_idx, zone_id);
+
+        CREATE TABLE IF NOT EXISTS brand_refs (
+            id TEXT PRIMARY KEY,
+            brand_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            path TEXT NOT NULL,
+            source_name TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_brand_refs_brand_id
+            ON brand_refs(brand_id);
         """
     )
     if "brands" in {
@@ -640,6 +666,125 @@ def delete_brand(brand_id: str) -> bool:
         cursor = conn.execute("DELETE FROM brands WHERE id = ?", (brand_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def brand_refs_dir(brand_id: str) -> Path:
+    return BRANDS_DIR / brand_id / "refs"
+
+
+def _brand_ref_row_to_public(row: sqlite3.Row) -> dict[str, Any]:
+    brand_id = row["brand_id"]
+    return {
+        "id": row["id"],
+        "brand_id": brand_id,
+        "kind": row["kind"],
+        "source_name": row["source_name"],
+        "path": row["path"],
+        "created_at": row["created_at"],
+        "image_url": f"/brands/{brand_id}/refs/{row['id']}/image",
+    }
+
+
+def list_brand_refs(brand_id: str) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, brand_id, kind, path, source_name, created_at
+            FROM brand_refs
+            WHERE brand_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (brand_id,),
+        ).fetchall()
+    return [_brand_ref_row_to_public(row) for row in rows]
+
+
+def get_brand_ref(brand_id: str, ref_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, brand_id, kind, path, source_name, created_at
+            FROM brand_refs
+            WHERE brand_id = ? AND id = ?
+            LIMIT 1
+            """,
+            (brand_id, ref_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _brand_ref_row_to_public(row)
+
+
+def insert_brand_ref(
+    ref_id: str,
+    brand_id: str,
+    kind: str,
+    path: str,
+    source_name: str | None = None,
+) -> dict[str, Any]:
+    now = _utc_now()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO brand_refs (
+                id, brand_id, kind, path, source_name, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (ref_id, brand_id, kind, path, source_name, now),
+        )
+        conn.commit()
+    ref = get_brand_ref(brand_id, ref_id)
+    assert ref is not None
+    return ref
+
+
+def delete_brand_ref(brand_id: str, ref_id: str) -> dict[str, Any] | None:
+    existing = get_brand_ref(brand_id, ref_id)
+    if existing is None:
+        return None
+    with get_connection() as conn:
+        conn.execute(
+            "DELETE FROM brand_refs WHERE brand_id = ? AND id = ?",
+            (brand_id, ref_id),
+        )
+        conn.commit()
+    return existing
+
+
+def replace_logo_brand_ref(
+    brand_id: str,
+    logo_path: str,
+    source_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Keep a single logo ref in sync with ``brands.logo_path``."""
+    with get_connection() as conn:
+        old_rows = conn.execute(
+            """
+            SELECT id, path FROM brand_refs
+            WHERE brand_id = ? AND kind = 'logo'
+            """,
+            (brand_id,),
+        ).fetchall()
+        for row in old_rows:
+            conn.execute(
+                "DELETE FROM brand_refs WHERE brand_id = ? AND id = ?",
+                (brand_id, row["id"]),
+            )
+    for row in old_rows:
+        old_path = Path(row["path"])
+        if old_path.is_file() and old_path != Path(logo_path):
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+    ref_id = f"{brand_id}-logo"
+    return insert_brand_ref(
+        ref_id,
+        brand_id,
+        "logo",
+        logo_path,
+        source_name,
+    )
 
 
 def _job_frame_row_to_public(row: sqlite3.Row) -> dict[str, Any]:
