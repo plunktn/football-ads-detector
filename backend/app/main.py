@@ -144,7 +144,7 @@ async def sync_config_import(request: Request) -> dict:
     if not body:
         raise HTTPException(status_code=422, detail="ZIP vacío.")
     try:
-        counts = await run_in_threadpool(import_config_zip, body, True)
+        counts = await run_in_threadpool(import_config_zip, body, replace=True)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except zipfile.BadZipFile as exc:

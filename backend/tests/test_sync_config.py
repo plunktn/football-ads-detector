@@ -124,6 +124,28 @@ class SyncConfigApiTests(unittest.TestCase):
         self.assertIn("cloud_configured", body)
         self.assertIn("server_accepts_sync", body)
 
+    def test_put_sync_config_accepts_zip(self) -> None:
+        db.create_brand_group("Grupo Put")
+        groups = db.list_brand_groups()
+        group_id = groups[0]["id"]
+        logo = db.BRANDS_DIR / "marca-put.png"
+        logo.write_bytes(b"\x89PNG\r\n\x1a\nlogo")
+        db.upsert_brand("marca-put", "Marca Put", [], str(logo), group_id=group_id)
+        payload = sync_config.export_config_zip()
+        with patch.dict(os.environ, {"SYNC_TOKEN": "secret-token"}, clear=False):
+            response = self.client.put(
+                "/sync/config",
+                content=payload,
+                headers={
+                    "X-Sync-Token": "secret-token",
+                    "Content-Type": "application/zip",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body["counts"]["brands"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
