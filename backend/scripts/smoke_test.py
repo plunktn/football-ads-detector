@@ -116,10 +116,13 @@ def main() -> int:
         return 1
 
     wb = load_workbook(report)
-    expected = ["Resumen", "Salidas", "Cumplimiento", "Dudosas", "Extras"]
-    if wb.sheetnames != expected:
+    if wb.sheetnames[:2] != ["Resumen LED", "Salidas LED"]:
         print(f"SMOKE FAIL sheets={wb.sheetnames}")
         return 1
+    for name in ("Cumplimiento", "Dudosas", "Extras"):
+        if name not in wb.sheetnames:
+            print(f"SMOKE FAIL missing {name}")
+            return 1
 
     print("SMOKE OK")
     return 0

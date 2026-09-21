@@ -499,6 +499,8 @@ class JobManager:
                 compliance=analysis.compliance,
                 hit_rate=analysis.hit_rate,
                 analyzed_seconds=analysis.analyzed_seconds,
+                include_fixed=record.config.include_fixed,
+                doubtful=analysis.doubtful,
             )
             result = JobResult(
                 analyzed_seconds=analysis.analyzed_seconds,

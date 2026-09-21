@@ -78,7 +78,8 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:43124
    escanea el marcador (`overrides_only`). Los offsets son por partido —
    no copies un 2T de otro video.
 3. El job fuerza ventana `full` y verifica cada pauta 1T/2T.
-4. Excel: `Resumen` | `Salidas` | `Cumplimiento` | `Dudosas` | `Extras`.
+4. Excel: `Resumen LED` | `Salidas LED` | `Cumplimiento` | `Dudosas` | `Extras`
+   (hoja `Fijas` solo si `include_fixed=true`).
 
 `hit_rate` = `HIT / (HIT + MISS)`. Los estados dudosos y `PAST_EOF` **no**
 entran al denominador.

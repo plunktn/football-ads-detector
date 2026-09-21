@@ -357,6 +357,28 @@ class ReportTests(unittest.TestCase):
             panel_kind="LED",
             count_1t=1,
             count_2t=1,
+            segments=[
+                SegmentResult(
+                    half="1T",
+                    clock_start="00:00",
+                    clock_end="00:15",
+                    video_seconds_start=0.0,
+                    video_seconds_end=15.0,
+                    start_frame=0,
+                    end_frame=15,
+                    duration_seconds=15,
+                ),
+                SegmentResult(
+                    half="2T",
+                    clock_start="00:00",
+                    clock_end="00:15",
+                    video_seconds_start=100.0,
+                    video_seconds_end=115.0,
+                    start_frame=100,
+                    end_frame=115,
+                    duration_seconds=15,
+                ),
+            ],
         )
         extra_brand = BrandResult(
             brand_id="mystery",
@@ -433,20 +455,26 @@ class ReportTests(unittest.TestCase):
         from openpyxl import load_workbook
 
         wb = load_workbook(path)
-        self.assertEqual(
-            wb.sheetnames,
-            [
-                "Resumen",
-                "Salidas",
-                "Cumplimiento",
-                "Dudosas",
-                "Extras",
-            ],
+        self.assertEqual(wb.sheetnames[0], "Resumen LED")
+        self.assertEqual(wb.sheetnames[1], "Salidas LED")
+        self.assertIn("Cumplimiento", wb.sheetnames)
+        self.assertIn("Dudosas", wb.sheetnames)
+        self.assertIn("Extras", wb.sheetnames)
+        self.assertNotIn("Fijas", wb.sheetnames)
+        self.assertEqual(wb["Resumen LED"][1][0].value, "Marca")
+        self.assertEqual(wb["Resumen LED"][2][0].value, "NETPLUS")
+        resumen_secs = sum(
+            int(wb["Resumen LED"].cell(row=r, column=3).value or 0)
+            for r in range(2, wb["Resumen LED"].max_row + 1)
         )
-        self.assertEqual(wb["Resumen"][1][0].value, "Cliente")
-        self.assertEqual(wb["Resumen"][2][0].value, "NETPLUS")
+        salidas_secs = sum(
+            int(wb["Salidas LED"].cell(row=r, column=5).value or 0)
+            for r in range(2, wb["Salidas LED"].max_row + 1)
+        )
+        self.assertEqual(resumen_secs, salidas_secs)
         self.assertEqual(wb["Cumplimiento"][1][5].value, "Status")
-        self.assertEqual(wb["Dudosas"][2][3].value, "NO_EVIDENCE")
+        # Dudosas: playlist NO_EVIDENCE row
+        self.assertEqual(wb["Dudosas"][2][4].value, "NO_EVIDENCE")
         self.assertEqual(wb["Extras"][2][0].value, "MYSTERYCO")
 
 
