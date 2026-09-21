@@ -133,6 +133,46 @@ class BrandMatchTests(unittest.TestCase):
             match_brand_ids("NETTOIUGRATIS NETTPIUS GRATIS", _catalog()),
         )
 
+    def test_ecuebet_typo_id_matches_ecuabet_ocr(self):
+        brands = prepare_brands(
+            [
+                BrandInput(
+                    id="ecuebet",
+                    name="Ecuabet",
+                    aliases=["ECUEBET", "ECUABET"],
+                )
+            ]
+        )
+        hits = match_brand_ids("ECUABET ECUABET", brands)
+        self.assertEqual(hits, {"ecuebet"})
+
+    def test_siete_and_1xbet_aliases(self):
+        brands = prepare_brands(
+            [
+                BrandInput(id="siete-com", name="SIETE.COM", aliases=["SIETE"]),
+                BrandInput(id="1xbet", name="1xbet", aliases=["1XBET"]),
+                BrandInput(
+                    id="grand-aviation",
+                    name="GRAND AVIATION",
+                    aliases=["GRANDAVIATION"],
+                ),
+            ]
+        )
+        self.assertEqual(
+            match_brand_ids("SIETE.COM SIETE.COM", brands),
+            {"siete-com"},
+        )
+        self.assertEqual(match_brand_ids("1XBET 1XBET", brands), {"1xbet"})
+        self.assertEqual(
+            match_brand_ids("GRAND AVIATION GRAND AVIATION", brands),
+            {"grand-aviation"},
+        )
+
+    def test_generate_aliases_includes_ecuebet_typo(self):
+        aliases = set(generate_aliases("Ecuebet"))
+        self.assertIn("ECUABET", aliases)
+        self.assertIn("ECUEBET", aliases)
+
 
 if __name__ == "__main__":
     unittest.main()

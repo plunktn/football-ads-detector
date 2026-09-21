@@ -14,6 +14,7 @@ catalog:
     - NETPLUS
     - NETT.PLUS
     - NETT.plus
+    - NETTplus
     - NETTPIUS
     - NETTOIUS
     - NETTOLUS
@@ -30,6 +31,21 @@ catalog:
     - ECUABET
     - ECUA BET
     - ECUABET COM
+    - ECUEBET
+    - Ecuabet
+  SIETE.COM:
+    - SIETE.COM
+    - SIETE
+    - Siete.com
+    - SIETECOM
+  GRAND AVIATION:
+    - GRAND AVIATION
+    - GRANDAVIATION
+    - GRAND-AVIATION
+  1XBET:
+    - 1XBET
+    - 1xbet
+    - 1 X BET
   LIONS SPORTS AND MEDIA:
     - LIONS SPORTS AND MEDIA
     - LIONS SPORT AND MEDIA
@@ -53,3 +69,6 @@ overlay_ignore:
   - WWW
   - HTTP
   - HTTPS
+  - LIGAECUABET
+  - LIGA ECUABET
+  - SCOREBUG

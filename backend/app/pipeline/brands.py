@@ -29,6 +29,7 @@ _CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
         "NETPLUS",
         "NET PLUS",
         "NETT PLUS",
+        "NETTplus",
         "NETTPIUS",
         "NETTOIUS",
         "NETTOLUS",
@@ -40,11 +41,30 @@ _CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
         "ECUABET",
         "ECUA BET",
         "ECUABET COM",
+        "ECUEBET",
+        "Ecuabet",
     ),
     "LIONS SPORTS AND MEDIA": (
         "LIONS SPORTS AND MEDIA",
         "LIONS SPORT AND MEDIA",
         "LIONS SPORTS MEDIA",
+        "LIONS",
+    ),
+    "SIETE.COM": (
+        "SIETE.COM",
+        "SIETE",
+        "Siete.com",
+        "SIETECOM",
+    ),
+    "GRAND AVIATION": (
+        "GRAND AVIATION",
+        "GRANDAVIATION",
+        "GRAND-AVIATION",
+    ),
+    "1XBET": (
+        "1XBET",
+        "1xbet",
+        "1 X BET",
     ),
 }
 
@@ -92,8 +112,11 @@ def _compact(s: str) -> str:
 
 
 def _is_ecuabet_brand(brand: PreparedBrand) -> bool:
-    return _compact(norm(brand.name)) == "ECUABET" or any(
-        _compact(needle) == "ECUABET" for needle in brand.needles
+    compact_name = _compact(norm(brand.name))
+    if compact_name in {"ECUABET", "ECUEBET"}:
+        return True
+    return any(
+        _compact(needle) in {"ECUABET", "ECUEBET"} for needle in brand.needles
     )
 
 
@@ -352,7 +375,13 @@ def match_brand_ids(
     *,
     min_repeats: int = _MIN_LED_REPEATS,
 ) -> set[str]:
-    """Return the set of brand ids visible in one OCR string."""
+    """Return the set of brand ids visible in one OCR string.
+
+    Fuzzy thresholds (rapidfuzz): partial_ratio and token_set_ratio ≥ 86
+    (``_PARTIAL_RATIO_MIN`` / ``_TOKEN_SET_RATIO_MIN``). Needles come from the
+    brand name, DB aliases, YAML catalog aliases, and ``_CANONICAL_ALIASES``.
+    LED rows require ``min_repeats`` (default 2) spatial/text repeats.
+    """
     clean_hits = filter_overlay_hits(hits) if hits is not None else None
     haystack = (
         " ".join(hit.text for hit in clean_hits)

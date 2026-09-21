@@ -22,6 +22,21 @@ class DbSeedTests(unittest.TestCase):
         second = db.list_stadium_summaries()
         self.assertEqual(first, second)
 
+    def test_seed_brand_aliases_merges_ecuabet(self) -> None:
+        db.ensure_db()
+        db.upsert_brand("ecuebet", "Ecuebet", ["ECUEBET"])
+        db.seed_brand_aliases()
+        brand = db.get_brand("ecuebet")
+        self.assertIsNotNone(brand)
+        self.assertEqual(brand["nombre"], "Ecuabet")
+        aliases_upper = {a.upper() for a in brand["aliases"]}
+        self.assertIn("ECUABET", aliases_upper)
+        self.assertIn("ECUEBET", aliases_upper)
+        # Second seed keeps custom aliases and stays idempotent.
+        db.seed_brand_aliases()
+        again = db.get_brand("ecuebet")
+        self.assertEqual(brand["aliases"], again["aliases"])
+
     def test_seeds_ligaecuabet(self) -> None:
         db.ensure_db()
         summaries = db.list_stadium_summaries()

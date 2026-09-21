@@ -391,10 +391,85 @@ def seed_brand_groups() -> None:
         conn.commit()
 
 
+# Canonical aliases merged into existing library rows (idempotent).
+# Does not rename brand ids (logos live under data/brands/{id}).
+_BRAND_ALIAS_SEED: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ecuebet": (
+        "Ecuabet",
+        ("ECUABET", "Ecuabet", "ECUEBET", "ECUA BET"),
+    ),
+    "ecuabet": (
+        "Ecuabet",
+        ("ECUABET", "Ecuabet", "ECUEBET", "ECUA BET"),
+    ),
+    "nettplus": (
+        "NETTPLUS",
+        ("NETTPLUS", "NETT PLUS", "NETTplus", "NET PLUS", "NETPLUS"),
+    ),
+    "siete-com": (
+        "SIETE.COM",
+        ("SIETE.COM", "SIETE", "Siete.com", "SIETECOM"),
+    ),
+    "lions": (
+        "LIONS",
+        ("LIONS", "LIONS SPORTS AND MEDIA", "LIONS SPORTS MEDIA"),
+    ),
+    "grand-aviation": (
+        "GRAND AVIATION",
+        ("GRAND AVIATION", "GRANDAVIATION", "GRAND-AVIATION"),
+    ),
+    "1xbet": (
+        "1xbet",
+        ("1xbet", "1XBET", "1 X BET"),
+    ),
+}
+
+
+def seed_brand_aliases() -> None:
+    """Merge known aliases into existing brands; never wipe custom aliases."""
+    with get_connection() as conn:
+        for brand_id, (preferred_name, aliases) in _BRAND_ALIAS_SEED.items():
+            row = conn.execute(
+                "SELECT id, nombre, aliases_json FROM brands WHERE id = ? LIMIT 1",
+                (brand_id,),
+            ).fetchone()
+            if row is None:
+                continue
+            existing = list(json.loads(row["aliases_json"] or "[]"))
+            merged: list[str] = []
+            seen: set[str] = set()
+            for alias in [*existing, *aliases, preferred_name]:
+                text = str(alias).strip()
+                if not text:
+                    continue
+                key = text.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(text)
+            nombre = row["nombre"] or preferred_name
+            # Prefer the corrected display name when the row still has a typo.
+            if brand_id in {"ecuebet", "ecuabet"} and nombre.strip().casefold() in {
+                "ecuebet",
+                "ecuabet",
+            }:
+                nombre = preferred_name
+            conn.execute(
+                """
+                UPDATE brands
+                SET nombre = ?, aliases_json = ?
+                WHERE id = ?
+                """,
+                (nombre, json.dumps(merged, ensure_ascii=False), brand_id),
+            )
+        conn.commit()
+
+
 def ensure_db() -> None:
     init_db()
     seed_stadiums()
     seed_brand_groups()
+    seed_brand_aliases()
 
 
 def list_stadium_summaries() -> list[dict[str, str]]:
