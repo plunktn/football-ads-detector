@@ -19,9 +19,9 @@ class StadiumConfigTests(unittest.TestCase):
         self.assertEqual(profile.grass_hsv.lower, [28, 25, 30])
         self.assertEqual(profile.grass_hsv.upper, [85, 255, 255])
         self.assertAlmostEqual(profile.led_band.top_frac, 0.12)
-        self.assertAlmostEqual(profile.led_band.height_frac, 0.055)
-        self.assertEqual(profile.led_band.min_height_px, 28)
-        self.assertEqual(profile.led_band.max_height_px, 90)
+        self.assertAlmostEqual(profile.led_band.height_frac, 0.035)
+        self.assertEqual(profile.led_band.min_height_px, 22)
+        self.assertEqual(profile.led_band.max_height_px, 70)
         self.assertAlmostEqual(profile.grass_y_top_frac, 0.28)
         self.assertAlmostEqual(profile.grass_y_bot_frac, 0.92)
         self.assertAlmostEqual(profile.grass_min_ratio, 0.08)
@@ -59,7 +59,7 @@ class StadiumConfigTests(unittest.TestCase):
             "grass_hsv": {"lower": [28, 25, 30], "upper": [85, 255, 255]},
             "led_band": {
                 "top_frac": 0.12,
-                "height_frac": 0.055,
+                "height_frac": 0.035,
                 "min_height_px": 28,
                 "max_height_px": 90,
             },
@@ -103,7 +103,7 @@ class StadiumConfigTests(unittest.TestCase):
                 yaml.safe_load(path.read_text(encoding="utf-8"))
             )
         self.assertEqual(loaded.nombre, "Saved Tmp")
-        self.assertEqual(loaded.camera.led_band.max_height_px, 90)
+        self.assertEqual(loaded.camera.led_band.max_height_px, 70)
 
     def test_missing_required_field_fails_validation(self) -> None:
         payload = {

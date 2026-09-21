@@ -69,9 +69,9 @@ _DEFAULT_ROI_PARAMS = RoiParams(
     grass_y_top_frac=_GRASS_Y_TOP_FRAC,
     grass_y_bot_frac=_GRASS_Y_BOT_FRAC,
     led_band_y_top_frac=_LED_BAND_Y_TOP_FRAC,
-    led_height_frac=0.055,
-    led_min_height_px=28,
-    led_max_height_px=90,
+    led_height_frac=0.035,
+    led_min_height_px=22,
+    led_max_height_px=70,
     matte_yellow_lower=(
         int(_MATTE_YELLOW_LOWER[0]),
         int(_MATTE_YELLOW_LOWER[1]),
@@ -205,8 +205,29 @@ class DebugCropWriter:
             overlay_path = self.directory / f"overlay_{frame_idx:06d}.jpg"
             cv2.imwrite(str(overlay_path), roi.debug_overlay)
         self.saved += 1
-        logger.info("Saved LED debug crop %s", crop_path)
+        logger.info(
+            "Saved LED debug crop %s (y0=%s y1=%s)",
+            crop_path,
+            roi.y0,
+            roi.y1,
+        )
         return True
+
+
+def crop_overhang_ratio(
+    touch: float,
+    y0: int,
+    led_h: int,
+) -> float:
+    """How far the crop top sits above the grass relative to expected LED height.
+
+    Values near 1.0 mean the strip kisses the touchline. Values ≫ 1.35 mean the
+    ROI climbed into upper fixed lonas (AURUM / GUTMAN / MIRACLE).
+    """
+    if led_h <= 0:
+        return float("inf")
+    overhang = max(0.0, float(touch) - float(y0))
+    return overhang / float(led_h)
 
 
 def grass_mask(frame: np.ndarray, profile: CameraProfile | None = None) -> np.ndarray:
@@ -380,6 +401,8 @@ def _pick_led_band(
     touch = float(np.median(y_grass)) if y_grass is not None else None
     scored: list[tuple[float, _LedBand]] = []
 
+    # Far-sideline LEDs at 720p sit ~100–110 px above a deep grass median;
+    # keep that window while still ranking out upper lonas via gap penalty.
     max_gap = max(led_h * 2.5, frame_h * 0.16)
     for band in bands:
         if touch is None:
@@ -407,7 +430,7 @@ def _pick_led_band(
         if intersects:
             rank -= 25.0
         # Prefer the LED kissing the grass over a board floating higher.
-        rank += max(0.0, gap_above) * 0.20
+        rank += max(0.0, gap_above) * 0.45
         scored.append((rank, band))
 
     if not scored:
@@ -430,28 +453,35 @@ def _anchor_band_to_grass(
     *,
     params: RoiParams | None = None,
 ) -> tuple[int, int] | None:
-    """Force a thin strip immediately above the touchline when grass is known."""
+    """Force a thin strip immediately above the touchline when grass is known.
+
+    Never copy a color-band's full ``y0/y1`` — upper lonas share bright HSV and
+    would drag the crop into AURUM/GUTMAN/MIRACLE boards. Far LEDs (high camera)
+    get a thin strip ending at ``band.y1``, not the full band height.
+    """
     p = params if params is not None else _roi_params(profile)
     led_h = _led_height_from_params(frame_h, p)
     if y_grass is not None:
         touch = int(round(float(np.median(y_grass))))
         touch = int(np.clip(touch, led_h + 2, frame_h - 1))
         if band is not None and abs(band.y1 - touch) <= led_h * 0.75:
-            # Always grow from the grass upward — never include lonas above.
-            y1 = min(frame_h, max(band.y1, touch))
+            # LED kissing the grass: grow strictly upward from the touchline.
+            # Do not push y1 below touch — that lifts y0 into fixed lonas.
+            y1 = touch
             y0 = max(0, y1 - led_h)
             if y1 - y0 >= _MIN_LED_PX:
                 return y0, y1
-        if band is not None and band.score >= 0.28:
-            y0, y1 = band.y0, min(frame_h, band.y1)
-            if y1 - y0 < _MIN_LED_PX:
-                y0 = max(0, y1 - led_h)
+        if band is not None and band.score >= 0.35:
+            # Far / elevated LED: thin strip at the band bottom only.
+            y1 = min(frame_h, band.y1)
+            y0 = max(0, y1 - led_h)
             if y1 - y0 >= _MIN_LED_PX:
                 return y0, y1
         y1 = touch
         y0 = max(0, y1 - led_h)
         if y1 - y0 >= _MIN_LED_PX:
             return y0, y1
+        return None
     if band is None:
         return None
     y1 = min(frame_h, band.y1)
@@ -507,7 +537,9 @@ def _mask_fixed_banner_columns(
     for x in range(crop_bgr.shape[1]):
         matte_yellow = yellow_frac_x[x] >= p.matte_yellow_col_frac and texture_x[x] <= matte_tex_max
         empty = v_x[x] < 35
-        if matte_yellow or empty:
+        # Non-emissive print lonas that leak into the LED row (low texture + dull V).
+        dull_print = texture_x[x] <= matte_tex_max * 0.85 and v_x[x] < 95 and yellow_frac_x[x] < 0.30
+        if matte_yellow or empty or dull_print:
             keep_x[x] = False
 
     keep_x_u8 = keep_x.astype(np.uint8) * 255
