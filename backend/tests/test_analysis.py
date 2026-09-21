@@ -32,23 +32,61 @@ class HysteresisTests(unittest.TestCase):
             [True, True, True, False],
         )
 
-    def test_does_not_turn_two_unknown_seconds_into_exposure(self):
+    def test_fills_up_to_three_second_gaps(self):
         self.assertEqual(
-            apply_hysteresis([True, None, None, True]),
-            [True, None, None, True],
+            apply_hysteresis([True, False, False, True]),
+            [True, True, True, True],
+        )
+        self.assertEqual(
+            apply_hysteresis([True, None, None, None, True]),
+            [True, True, True, True, True],
+        )
+
+    def test_does_not_fill_four_second_gap(self):
+        self.assertEqual(
+            apply_hysteresis([True, False, False, False, False, True]),
+            [True, False, False, False, False, True],
         )
 
 
 class AggregateTests(unittest.TestCase):
-    def test_two_false_samples_close_segment(self):
+    def test_two_false_samples_merge_into_one_run(self):
+        """Gap of 2s ≤ MERGE_GAP_SEC → single appearance spanning the bridge."""
         result = aggregate_observations(
             [observation(0, True), observation(1, True), observation(2, False),
              observation(3, False), observation(4, True)],
             [("nett", "NETT plus")],
         )[0]
+        self.assertEqual(result.appearances, 1)
+        self.assertEqual(result.total_seconds, 5)
+        self.assertEqual(result.start_frames, [0])
+
+    def test_four_false_samples_split_segments(self):
+        result = aggregate_observations(
+            [
+                observation(0, True),
+                observation(1, False),
+                observation(2, False),
+                observation(3, False),
+                observation(4, False),
+                observation(5, True),
+            ],
+            [("nett", "NETT plus")],
+        )[0]
         self.assertEqual(result.appearances, 2)
-        self.assertEqual(result.total_seconds, 3)
-        self.assertEqual(result.start_frames, [0, 120])
+        self.assertEqual(result.total_seconds, 2)
+        self.assertEqual(result.start_frames, [0, 150])
+
+    def test_on_off_on_rotation_stays_one_salida(self):
+        """Typical playlist block: 5s ON, 2s OCR miss, 5s ON → one ~12s run."""
+        samples = (
+            [observation(i, True) for i in range(5)]
+            + [observation(5, False), observation(6, False)]
+            + [observation(i, True) for i in range(7, 12)]
+        )
+        result = aggregate_observations(samples, [("nett", "NETT plus")])[0]
+        self.assertEqual(result.appearances, 1)
+        self.assertEqual(result.total_seconds, 12)
 
     def test_segment_copies_zone_from_observation(self):
         samples = [
@@ -67,10 +105,10 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(result.segments[0].zone_id, "led_lateral_main")
         self.assertEqual(result.segments[0].posicion, "LATERAL_MAIN")
 
-    def test_three_skips_close_without_counting_unknown_samples(self):
+    def test_four_skips_split_without_counting_unknown_samples(self):
         result = aggregate_observations(
             [observation(0, True), observation(1, None), observation(2, None),
-             observation(3, None), observation(4, True)],
+             observation(3, None), observation(4, None), observation(5, True)],
             [("nett", "NETT plus")],
         )[0]
         self.assertEqual(result.appearances, 2)
