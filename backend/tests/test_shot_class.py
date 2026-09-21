@@ -55,10 +55,19 @@ class LocateZonesTests(unittest.TestCase):
 
     def test_fixed_second_row_is_located(self):
         frame = _sideline_frame()
-        located = locate_zones(frame, None, classify_shot(frame))
+        located = locate_zones(
+            frame, None, classify_shot(frame), include_fixed=True
+        )
         kinds = {zone.tipo_panel for zone, _roi in located}
         self.assertIn("LED_DYNAMIC", kinds)
         self.assertIn("FIXED_PRINT", kinds)
+
+    def test_fixed_second_row_skipped_by_default(self):
+        frame = _sideline_frame()
+        located = locate_zones(frame, None, classify_shot(frame))
+        kinds = {zone.tipo_panel for zone, _roi in located}
+        self.assertIn("LED_DYNAMIC", kinds)
+        self.assertNotIn("FIXED_PRINT", kinds)
 
     def test_wide_closeup_and_graphic_return_empty(self):
         height, width = 720, 1280
@@ -92,9 +101,15 @@ class LocateZonesTests(unittest.TestCase):
         located = locate_zones(frame, profile, ShotKind.WIDE_LED)
         self.assertFalse(any(zone.id == "behind_goal_left" for zone, _roi in located))
         self.assertTrue(
+            all(zone.posicion == "LATERAL_MAIN" for zone, _roi in located)
+        )
+        located_fixed = locate_zones(
+            frame, profile, ShotKind.WIDE_LED, include_fixed=True
+        )
+        self.assertTrue(
             all(
                 zone.posicion in {"LATERAL_MAIN", "FIXED_BOARD_MIDFIELD"}
-                for zone, _roi in located
+                for zone, _roi in located_fixed
             )
         )
 
@@ -104,8 +119,12 @@ class LocateZonesTests(unittest.TestCase):
         frame = _sideline_frame()
         profile = load_stadium_profile("ligaecuabet").model_copy(update={"panel_zones": []})
         located = locate_zones(frame, profile, ShotKind.WIDE_LED)
-        self.assertEqual(len(located), 2)
+        self.assertEqual(len(located), 1)
         self.assertEqual(located[0][0].posicion, "LATERAL_MAIN")
+        located_fixed = locate_zones(
+            frame, profile, ShotKind.WIDE_LED, include_fixed=True
+        )
+        self.assertEqual(len(located_fixed), 2)
 
     def test_far_led_sideline_still_locates(self):
         frame = _wide_far_led_frame()

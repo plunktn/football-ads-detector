@@ -10,7 +10,7 @@ import numpy as np
 from ...schemas import BrandInput
 
 
-DEFAULT_SCORE_THRESHOLD = 0.55
+DEFAULT_SCORE_THRESHOLD = 0.70
 # LED-row logos are often much smaller than campaign PNGs; also cover slight zoom.
 _SCALES = (0.25, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0, 1.15, 1.35, 1.6, 2.0)
 _MIN_TEMPLATE_SIDE = 4

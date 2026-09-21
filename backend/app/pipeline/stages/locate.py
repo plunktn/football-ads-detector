@@ -33,11 +33,16 @@ def locate_zones(
     frame: np.ndarray,
     profile: CameraProfile | None,
     shot: ShotKind,
+    *,
+    include_fixed: bool = False,
 ) -> list[tuple[PanelZone, RoiResult]]:
     """Return (zone, ROI) pairs that should be OCR'd for this shot.
 
     Replay/graphic, close-up and empty-WIDE frames skip localization. TV
     overlays (scoreboard, virtual banners) are never returned.
+
+    Fixed second-row lonas are opt-in (``include_fixed``); LED-first commercial
+    reports default to False so FIXED_PRINT never contaminates LED totals.
     """
     if shot in _SKIP_SHOTS:
         return []
@@ -55,6 +60,8 @@ def locate_zones(
             located.append((zone, led_roi))
             continue
         if zone.tipo_panel == "FIXED_PRINT":
+            if not include_fixed:
+                continue
             if led_roi is None:
                 led_roi = extract_led_roi(frame, profile=profile)
             located.append(

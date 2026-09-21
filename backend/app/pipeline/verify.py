@@ -366,7 +366,9 @@ def verify_slot_in_video(
             ok, frame, frame_idx = read_frame_at_seconds(cap, t)
             if ok and frame is not None:
                 shot = classify_shot(frame, camera_profile)
-                located = locate_zones(frame, camera_profile, shot)
+                located = locate_zones(
+                    frame, camera_profile, shot, include_fixed=False
+                )
                 if not located:
                     observations.append(
                         FrameObservation(
@@ -402,7 +404,11 @@ def verify_slot_in_video(
                         prepared,
                         ocr_hits,
                         min_repeats=min_repeats,
-                    ) | match_fixed_brand_ids(roi.crop_bgr, list(brands))
+                    )
+                    if zone.tipo_panel == "FIXED_PRINT":
+                        strong = strong | match_fixed_brand_ids(
+                            roi.crop_bgr, list(brands)
+                        )
                     weak = set()
                     if brand_id not in strong and zone.tipo_panel != "FIXED_PRINT":
                         weak = match_brand_ids(

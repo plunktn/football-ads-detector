@@ -94,6 +94,7 @@ class JobConfig(BaseModel):
     analysis_mode: AnalysisMode = "discovery"
     kickoff_offset_sec: float | None = None
     second_half_start_sec: float | None = None
+    include_fixed: bool = False
 
     @field_validator("duration_mode")
     @classmethod

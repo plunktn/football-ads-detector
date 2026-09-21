@@ -27,7 +27,7 @@ from .pipeline.calibrate import load_sample_frame, persist_stadium, propose_from
 from .pipeline.brands import brands_from_names
 from .job_storage import maybe_purge_job_media, video_paths_from_meta
 from .pipeline.brand_refs import extract_video_keyframes, save_image_bytes
-from .pipeline.catalog import build_catalog_payload
+from .pipeline.catalog import assignable_brands_from_meta, build_catalog_payload
 from .pipeline.catalog_report import build_catalog_report
 from .pipeline.playlist import parse_playlist, unique_brands
 from .pipeline.video import get_video_info
@@ -631,6 +631,7 @@ async def create_job(request: Request) -> dict[str, str]:
     analysis_mode_raw = form.get("analysis_mode")
     kickoff_offset_raw = form.get("kickoff_offset_sec")
     second_half_raw = form.get("second_half_start_sec")
+    include_fixed_raw = form.get("include_fixed")
     playlist_upload = form.get("playlist")
 
     if mode not in {"single", "split"}:
@@ -674,6 +675,9 @@ async def create_job(request: Request) -> dict[str, str]:
     second_half_start_sec = _parse_optional_float(
         second_half_raw, "second_half_start_sec"
     )
+    include_fixed = False
+    if isinstance(include_fixed_raw, str) and include_fixed_raw.strip():
+        include_fixed = include_fixed_raw.strip().lower() in {"1", "true", "yes", "on"}
 
     if brands_raw is None or brands_raw == "":
         brands_raw = "[]"
@@ -828,6 +832,7 @@ async def create_job(request: Request) -> dict[str, str]:
             analysis_mode=analysis_mode,
             kickoff_offset_sec=kickoff_offset_sec,
             second_half_start_sec=second_half_start_sec,
+            include_fixed=include_fixed,
         )
         meta = {
             "brands": [brand.model_dump(mode="json") for brand in brands],
@@ -837,6 +842,7 @@ async def create_job(request: Request) -> dict[str, str]:
             "playlist_path": str(playlist_path) if playlist_path else None,
             "kickoff_offset_sec": kickoff_offset_sec,
             "second_half_start_sec": second_half_start_sec,
+            "include_fixed": include_fixed,
         }
         (directory / "meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2),
@@ -1121,13 +1127,26 @@ async def patch_catalog_frame(job_id: str, frame_id: int, payload: CatalogFrameP
             raise HTTPException(status_code=422, detail="brand_id es obligatorio.")
         brand = await run_in_threadpool(db.get_brand, payload.brand_id)
         if brand is None:
-            raise HTTPException(status_code=422, detail="Marca no encontrada.")
+            assignable_ids = {
+                item["brand_id"]
+                for item in assignable_brands_from_meta(Path(job["directory"]))
+            }
+            if payload.brand_id not in assignable_ids:
+                raise HTTPException(status_code=422, detail="Marca no encontrada.")
         updated = await run_in_threadpool(
             db.update_job_frame,
             frame_id,
             brand_id=payload.brand_id,
             user_verdict="assigned",
             machine_label="positive",
+        )
+    elif payload.action == "mark_empty":
+        updated = await run_in_threadpool(
+            db.update_job_frame,
+            frame_id,
+            brand_id=None,
+            user_verdict="marked_empty",
+            machine_label="empty",
         )
     else:
         raise HTTPException(status_code=422, detail="Acción no válida.")

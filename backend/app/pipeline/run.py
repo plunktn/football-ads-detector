@@ -100,6 +100,18 @@ def save_job_preview_frame(video_path: Path, dest: Path, at_seconds: float = 30.
 
 
 @dataclass(frozen=True)
+class DoubtfulObservation:
+    half: str
+    time_seconds: float
+    frame_idx: int
+    reason: str
+    ocr_text: str = ""
+    zone_id: str | None = None
+    shot: str | None = None
+    crop_relpath: str | None = None
+
+
+@dataclass(frozen=True)
 class AnalysisOutput:
     analyzed_seconds: int
     brands: list[BrandResult]
@@ -107,6 +119,7 @@ class AnalysisOutput:
     compliance: list = field(default_factory=list)
     hit_rate: float | None = None
     observations: list[FrameObservation] = field(default_factory=list)
+    doubtful: list[DoubtfulObservation] = field(default_factory=list)
 
 
 def _bounded_end(info: VideoInfo, start: float, duration: float | None) -> float:
@@ -209,11 +222,13 @@ def run_analysis(
     analysis_mode: str = "discovery",
     playlist_slots: Sequence[PlaylistSlot] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    include_fixed: bool = False,
 ) -> AnalysisOutput:
     """Analyze selected windows at one sample per second.
 
-    discovery: 1 fps scan of LED + fixed bands.
+    discovery: 1 fps scan of LED (+ optional fixed bands).
     playlist_verify: same scan, then hit/miss each 1T/2T playlist slot.
+    Non-usable shots (close-up / bumper / wide) never add LED seconds.
     """
     if should_cancel is not None and should_cancel():
         raise JobCancelled("Detenido por el usuario")
@@ -227,6 +242,7 @@ def run_analysis(
     prepared = prepare_brands(list(brands))
     brand_pairs = [(brand.id, brand.name) for brand in prepared]
     observations: list[FrameObservation] = []
+    doubtful: list[DoubtfulObservation] = []
     debug_path = Path(debug_dir)
     debug_writer = DebugCropWriter(debug_path)
     catalog_dir = debug_path.parent / "catalog"
@@ -248,7 +264,12 @@ def run_analysis(
                     continue
 
                 shot = classify_shot(frame, camera_profile)
-                located = locate_zones(frame, camera_profile, shot)
+                located = locate_zones(
+                    frame,
+                    camera_profile,
+                    shot,
+                    include_fixed=include_fixed,
+                )
                 frame_observations: list[FrameObservation] = []
                 for zone, roi in located:
                     if roi.skipped or roi.crop_bgr is None:
@@ -265,6 +286,17 @@ def run_analysis(
                                 shot=shot,
                             )
                         )
+                        if zone.tipo_panel != "FIXED_PRINT":
+                            doubtful.append(
+                                DoubtfulObservation(
+                                    half=window.half,
+                                    time_seconds=t,
+                                    frame_idx=frame_idx,
+                                    reason=roi.reason or "roi_skipped",
+                                    zone_id=zone.id,
+                                    shot=str(shot),
+                                )
+                            )
                         continue
                     if zone.tipo_panel != "FIXED_PRINT":
                         debug_writer.maybe_save(frame_idx, roi)
@@ -276,7 +308,12 @@ def run_analysis(
                         prepared,
                         ocr_hits,
                         min_repeats=min_repeats,
-                    ) | match_fixed_brand_ids(roi.crop_bgr, list(brands))
+                    )
+                    # Template matcher is FIXED_PRINT only — never on LED crops.
+                    if zone.tipo_panel == "FIXED_PRINT":
+                        strong = strong | match_fixed_brand_ids(
+                            roi.crop_bgr, list(brands)
+                        )
                     weak: set[str] = set()
                     crop_relpath: str | None = None
                     context_relpath: str | None = None
@@ -308,6 +345,19 @@ def run_analysis(
                             quality=72,
                         ):
                             context_relpath = ctx_rel
+                        if weak and not strong:
+                            doubtful.append(
+                                DoubtfulObservation(
+                                    half=window.half,
+                                    time_seconds=t,
+                                    frame_idx=frame_idx,
+                                    reason="ambiguous_ocr",
+                                    ocr_text=raw_text,
+                                    zone_id=zone.id,
+                                    shot=str(shot),
+                                    crop_relpath=crop_relpath,
+                                )
+                            )
                     frame_observations.append(
                         FrameObservation(
                             half=window.half,
@@ -326,6 +376,7 @@ def run_analysis(
                         )
                     )
                 if not frame_observations:
+                    # CLOSEUP / GRAPHIC / WIDE / UNKNOWN → NO_EVIDENCE, no LED seconds.
                     frame_observations.append(
                         FrameObservation(
                             half=window.half,
@@ -334,6 +385,15 @@ def run_analysis(
                             detected_brand_ids=frozenset(),
                             skipped=True,
                             shot=shot,
+                        )
+                    )
+                    doubtful.append(
+                        DoubtfulObservation(
+                            half=window.half,
+                            time_seconds=t,
+                            frame_idx=frame_idx,
+                            reason=f"no_usable_led_plane:{shot}",
+                            shot=str(shot),
                         )
                     )
 
@@ -437,4 +497,5 @@ def run_analysis(
         compliance=compliance,
         hit_rate=rate,
         observations=observations,
+        doubtful=doubtful,
     )

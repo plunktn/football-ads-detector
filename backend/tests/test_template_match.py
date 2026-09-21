@@ -40,7 +40,7 @@ class MatchLogoTests(unittest.TestCase):
         crop = _crop_with_logo(logo)
         hit = match_logo(crop, logo)
         self.assertIsInstance(hit, TemplateHit)
-        self.assertGreaterEqual(hit.score, 0.55)
+        self.assertGreaterEqual(hit.score, 0.70)
         x, y, w, h = hit.bbox
         self.assertGreater(w, 0)
         self.assertGreater(h, 0)
@@ -81,7 +81,7 @@ class DetectFixedBrandsTests(unittest.TestCase):
         ]
         hits = detect_fixed_brands(crop, brands)
         self.assertEqual([item["brand_id"] for item in hits], ["ligaecuabet"])
-        self.assertGreaterEqual(hits[0]["score"], 0.55)
+        self.assertGreaterEqual(hits[0]["score"], 0.70)
         self.assertGreater(hits[0]["visible_area_ratio"], 0.0)
 
     def test_match_fixed_brand_ids_from_logo_path(self):

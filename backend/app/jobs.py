@@ -246,6 +246,7 @@ class JobManager:
             analysis_mode=meta.get("analysis_mode", "discovery"),
             kickoff_offset_sec=meta.get("kickoff_offset_sec"),
             second_half_start_sec=meta.get("second_half_start_sec"),
+            include_fixed=bool(meta.get("include_fixed", False)),
         )
         video_paths = [Path(path) for path in meta["video_paths"]]
         playlist_raw = meta.get("playlist_path")
@@ -386,6 +387,7 @@ class JobManager:
                     else None
                 ),
                 should_cancel=record.cancel_event.is_set,
+                include_fixed=record.config.include_fixed,
             )
         )
 
