@@ -90,6 +90,7 @@ export type Job = {
     compliance?: ComplianceRow[];
     hit_rate?: number | null;
     report_xlsx_path?: string | null;
+    warnings?: string[];
   } | null;
 };
 
@@ -192,6 +193,7 @@ export type JobCatalog = {
   job_id: string;
   catalog_confirmed_at: string | null;
   discarded_count: number;
+  assignable_brands: { brand_id: string; name: string }[];
   brands: { brand_id: string; name: string; frames: CatalogFrame[] }[];
   attention: CatalogFrame[];
   empty: CatalogFrame[];
@@ -542,7 +544,8 @@ export function jobPreviewUrl(jobId: string): string {
 
 export type CatalogFramePatch =
   | { action: "false_positive" }
-  | { action: "assign"; brand_id: string };
+  | { action: "assign"; brand_id: string }
+  | { action: "mark_empty" };
 
 export async function patchCatalogFrame(
   jobId: string,

@@ -15,7 +15,7 @@ from .pipeline.playlist import parse_playlist
 from .pipeline.report import write_commercial_report
 from .pipeline.catalog import persist_catalog
 from .pipeline.run import AnalysisUpdate, run_analysis, save_job_preview_frame
-from .pipeline.scoreboard import apply_kickoff_overrides, detect_kickoffs
+from .pipeline.scoreboard import resolve_kickoff
 from .schemas import (
     BrandInput,
     BrandResult,
@@ -453,25 +453,23 @@ class JobManager:
                 camera_profile = None
             if record.cancel_event.is_set():
                 raise JobCancelled("Detenido por el usuario")
-            kickoff = await asyncio.to_thread(
-                detect_kickoffs,
+            kickoff, kickoff_warnings = await asyncio.to_thread(
+                resolve_kickoff,
                 record.video_paths,
                 record.config.mode,
                 record.config.duration_mode,
+                kickoff_offset_sec=record.config.kickoff_offset_sec,
+                second_half_start_sec=record.config.second_half_start_sec,
                 camera_profile=camera_profile,
                 should_cancel=record.cancel_event.is_set,
             )
-            kickoff = apply_kickoff_overrides(
-                kickoff,
-                kickoff_offset_sec=record.config.kickoff_offset_sec,
-                second_half_start_sec=record.config.second_half_start_sec,
-            )
             logger.info(
-                "Job %s kickoff: 1T %.1fs, 2T %s (%s)",
+                "Job %s kickoff: 1T %.1fs, 2T %s (%s)%s",
                 record.id,
                 kickoff.first_half_video_seconds,
                 kickoff.second_half_video_seconds,
                 kickoff.note,
+                f" warnings={kickoff_warnings}" if kickoff_warnings else "",
             )
             if record.cancel_event.is_set():
                 raise JobCancelled("Detenido por el usuario")
@@ -507,6 +505,7 @@ class JobManager:
                 compliance=analysis.compliance,
                 hit_rate=analysis.hit_rate,
                 report_xlsx_path=str(report_path),
+                warnings=list(kickoff_warnings),
             )
             record.result = result
             result_path = record.directory / "result.json"

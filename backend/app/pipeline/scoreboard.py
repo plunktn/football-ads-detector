@@ -200,6 +200,112 @@ def apply_kickoff_overrides(
     return kickoff.model_copy(update=mapped)
 
 
+def resolve_kickoff(
+    video_paths: list[str | Path],
+    mode: str,
+    duration_mode: str = "full",
+    *,
+    kickoff_offset_sec: float | None = None,
+    second_half_start_sec: float | None = None,
+    camera_profile: CameraProfile | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> tuple[Kickoff, list[str]]:
+    """Resolve kickoff using operator overrides when present; skip OCR scan if both given.
+
+    Returns ``(kickoff, warnings)``. Warnings are operator-facing strings (e.g. missing 2T).
+    Never reuse a fixed second-half second like 3521 across matches.
+    """
+    warnings: list[str] = []
+    need_second_half = duration_mode == "full"
+    has_1t = kickoff_offset_sec is not None
+    has_2t = second_half_start_sec is not None
+
+    if has_1t and (has_2t or not need_second_half):
+        kickoff = Kickoff(
+            first_half_video_seconds=float(kickoff_offset_sec),
+            second_half_video_seconds=(
+                float(second_half_start_sec) if has_2t else None
+            ),
+            note="overrides_only",
+        )
+        return kickoff, warnings
+
+    if has_1t and need_second_half and not has_2t:
+        first = float(kickoff_offset_sec)
+        second = None
+        if video_paths:
+            path = video_paths[0] if mode != "split" else (
+                video_paths[1] if len(video_paths) >= 2 else video_paths[0]
+            )
+            try:
+                duration = get_video_info(path).duration_seconds
+            except ValueError:
+                duration = 0.0
+            if mode == "split" and len(video_paths) >= 2:
+                second = _scan_for_kickoff(
+                    video_paths[1],
+                    expected_half="2T",
+                    camera_profile=camera_profile,
+                    should_cancel=should_cancel,
+                )
+            else:
+                second = _detect_second_half_single(
+                    video_paths[0],
+                    first,
+                    duration,
+                    camera_profile=camera_profile,
+                    should_cancel=should_cancel,
+                )
+        if second is None:
+            warnings.append(
+                "2T no detectado tras override de 1T; mide el inicio del 2T "
+                "en ESTE archivo (no copies 3521 de otro partido)."
+            )
+            note = "kickoff_offset_sec; 2T scan failed"
+        else:
+            note = "kickoff_offset_sec; 2T detectado por marcador"
+        return (
+            Kickoff(
+                first_half_video_seconds=first,
+                second_half_video_seconds=second,
+                note=note,
+            ),
+            warnings,
+        )
+
+    if has_2t and not has_1t:
+        kickoff = detect_kickoffs(
+            video_paths,
+            mode,
+            duration_mode,
+            camera_profile=camera_profile,
+            should_cancel=should_cancel,
+        )
+        kickoff = apply_kickoff_overrides(
+            kickoff,
+            second_half_start_sec=second_half_start_sec,
+        )
+        if "fallback" in kickoff.note or kickoff.first_half_video_seconds == 0.0:
+            warnings.append(
+                "1T usó detección/fallback; revisá el offset de kickoff de este partido."
+            )
+        return kickoff, warnings
+
+    kickoff = detect_kickoffs(
+        video_paths,
+        mode,
+        duration_mode,
+        camera_profile=camera_profile,
+        should_cancel=should_cancel,
+    )
+    if need_second_half and kickoff.second_half_video_seconds is None:
+        warnings.append(
+            "2T no detectado por marcador; cargá second_half_start_sec medido "
+            "en este video (offsets no son portables entre partidos)."
+        )
+    return kickoff, warnings
+
+
 def detect_kickoffs(
     video_paths: list[str | Path],
     mode: str,

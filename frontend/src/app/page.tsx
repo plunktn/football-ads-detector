@@ -1239,7 +1239,8 @@ export default function Home() {
                       </div>
                     </div>
                     <p className="text-[11px] text-muted-foreground">
-                      Vacío = detección automática. Ejemplo full match: 282 / 3521.
+                      Vacío = detección automática. Los segundos son de este
+                      archivo (no copies offsets de otro partido).
                     </p>
                   </div>
                 ) : null}
@@ -1588,25 +1589,37 @@ export default function Home() {
                       una pestaña nueva.
                     </p>
                     {job.kickoff ? (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                            Kickoff 1T
-                          </p>
-                          <p className="mt-1 font-mono text-sm text-foreground">
-                            {job.kickoff.first_half_video_seconds.toFixed(1)} s
-                          </p>
+                      <div className="space-y-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                              Kickoff 1T
+                            </p>
+                            <p className="mt-1 font-mono text-sm text-foreground">
+                              {job.kickoff.first_half_video_seconds.toFixed(1)} s
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                              Kickoff 2T
+                            </p>
+                            <p className="mt-1 font-mono text-sm text-foreground">
+                              {job.kickoff.second_half_video_seconds == null
+                                ? "No detectado"
+                                : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
+                            </p>
+                          </div>
                         </div>
-                        <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                            Kickoff 2T
-                          </p>
-                          <p className="mt-1 font-mono text-sm text-foreground">
-                            {job.kickoff.second_half_video_seconds == null
-                              ? "No detectado"
-                              : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
-                          </p>
-                        </div>
+                        <p className="font-mono text-[11px] text-muted-foreground">
+                          Origen: {job.kickoff.note}
+                        </p>
+                        {job.result?.warnings && job.result.warnings.length > 0 ? (
+                          <ul className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                            {job.result.warnings.map((warning) => (
+                              <li key={warning}>{warning}</li>
+                            ))}
+                          </ul>
+                        ) : null}
                       </div>
                     ) : null}
                     <CatalogReview jobId={job.id} live readOnly />

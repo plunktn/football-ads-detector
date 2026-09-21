@@ -74,7 +74,9 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:43124
    (`PREVIA` / `PRIMER TIEMPO` / `ENTRETIEMPO` / `SEGUNDO TIEMPO` / `POST`)
    con columnas `CLIENTE`, `MINUTO` (`0.15` = 0:15), `DURACIÓN` (default 15s).
 2. Opcional: override de **offset kickoff 1T** e **inicio 2T** en segundos de
-   archivo (vacío = detección por marcador).
+   archivo (vacío = detección por marcador). Si cargás ambos, el job **no**
+   escanea el marcador (`overrides_only`). Los offsets son por partido —
+   no copies un 2T de otro video.
 3. El job fuerza ventana `full` y verifica cada pauta 1T/2T.
 4. Excel: `Resumen` | `Salidas` | `Cumplimiento` | `Dudosas` | `Extras`.
 
@@ -95,8 +97,8 @@ Overlays de TV (Zapping, xtrim, SHOWTIME, etc.) no cuentan.
 ### Checklist primera corrida real
 
 1. Video full match (o 1T+2T split) + playlist Lions xlsx.
-2. Si el kickoff auto falla, fija offsets (ej. TU vs Cuenca / Lib vs Ore:
-   kickoff ~282s, 2T ~3521s).
+2. Si el kickoff auto falla, fija offsets **medidos en ese archivo** (1T ≈
+   saque; 2T ≈ reinicio tras entretiempo — no reutilices 3521 de otro partido).
 3. Corre `playlist_verify` y abre `informe.xlsx`.
 4. Revisa hoja **Dudosas** antes de tratar un MISS como incumplimiento.
 5. OCR flojo → preferir `AMBIGUOUS` + captura; no inventar métricas.

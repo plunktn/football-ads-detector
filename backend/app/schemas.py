@@ -167,6 +167,11 @@ class CatalogBrandBucket(BaseModel):
     frames: list[CatalogFrame] = Field(default_factory=list)
 
 
+class CatalogAssignableBrand(BaseModel):
+    brand_id: str
+    name: str
+
+
 class CatalogProgress(BaseModel):
     positives: int = 0
     attention: int = 0
@@ -178,6 +183,7 @@ class CatalogResponse(BaseModel):
     job_id: str
     catalog_confirmed_at: str | None = None
     discarded_count: int = 0
+    assignable_brands: list[CatalogAssignableBrand] = Field(default_factory=list)
     brands: list[CatalogBrandBucket] = Field(default_factory=list)
     attention: list[CatalogFrame] = Field(default_factory=list)
     empty: list[CatalogFrame] = Field(default_factory=list)
@@ -185,7 +191,7 @@ class CatalogResponse(BaseModel):
 
 
 class CatalogFramePatch(BaseModel):
-    action: Literal["false_positive", "assign"]
+    action: Literal["false_positive", "assign", "mark_empty"]
     brand_id: str | None = None
 
 
@@ -310,7 +316,7 @@ class JobResult(BaseModel):
     compliance: list[ComplianceRow] = Field(default_factory=list)
     hit_rate: float | None = None
     report_xlsx_path: str | None = None
-
+    warnings: list[str] = Field(default_factory=list)
 
 class JobSummaryTotals(BaseModel):
     brand_count: int = 0
