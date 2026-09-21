@@ -38,7 +38,7 @@ class GrassHsvEstimationTests(unittest.TestCase):
         frame[120:220, 40:280] = (40, 180, 40)
         camera, previews = propose_from_frame(frame)
         self.assertEqual(camera.id, "default")
-        self.assertEqual(camera.led_band.min_height_px, 28)
+        self.assertEqual(camera.led_band.min_height_px, 22)
         self.assertIn("scoreboard_jpeg_b64", previews)
         self.assertIn("grass_mask_jpeg_b64", previews)
 

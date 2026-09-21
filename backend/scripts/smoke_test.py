@@ -74,7 +74,7 @@ def main() -> int:
          ), \
          patch(
              "app.pipeline.run.match_brand_ids",
-             return_value={"netplus", "ecuabet"},
+             side_effect=lambda *args, **kwargs: {"netplus", "ecuabet"},
          ), \
          patch("app.pipeline.run.match_fixed_brand_ids", return_value=set()), \
          patch(

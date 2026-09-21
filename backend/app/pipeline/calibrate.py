@@ -27,9 +27,9 @@ _FALLBACK_CAMERA = {
     "grass_hsv": FALLBACK_GRASS_HSV,
     "led_band": {
         "top_frac": 0.12,
-        "height_frac": 0.055,
-        "min_height_px": 28,
-        "max_height_px": 90,
+        "height_frac": 0.035,
+        "min_height_px": 22,
+        "max_height_px": 70,
     },
     "grass_y_top_frac": 0.28,
     "grass_y_bot_frac": 0.92,
