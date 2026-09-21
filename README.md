@@ -109,12 +109,15 @@ Crops de depuración en `data/jobs/{id}/debug/`; resultado en
 
 ## Limitaciones v1
 
-- Muestreo de análisis a 1 FPS (P1: 0.5s en ventanas verify).
+- Muestreo de análisis configurable: **1 fps** (default, discovery barato) o
+  **2 fps** (informe preciso, ~2× CPU). Huecos <1s aún pueden subcontarse a
+  1 fps; preferí 2 fps para duración comercial LED.
 - Procesamiento local en CPU; paneos, blur o tipografías pequeñas pueden
   fallar el OCR.
 - Fondos de arco y overlays virtuales de broadcast no se inventarian.
 - Discovery no inventa marcas fuera del catálogo o de la playlist.
-
+- Vallas fijas están desactivadas por defecto (`include_fixed=false`); no
+  contaminan el total LED.
 ## Almacenamiento de jobs
 
 Por defecto, al terminar un análisis exitoso se borran el video subido y la

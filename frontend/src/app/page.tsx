@@ -592,6 +592,8 @@ export default function Home() {
   const [playlist, setPlaylist] = useState<File>();
   const [kickoffOffsetSec, setKickoffOffsetSec] = useState("");
   const [secondHalfStartSec, setSecondHalfStartSec] = useState("");
+  const [sampleFps, setSampleFps] = useState<"1" | "2">("1");
+  const [includeFixed, setIncludeFixed] = useState(false);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandGroups, setBrandGroups] = useState<BrandGroup[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(true);
@@ -795,6 +797,8 @@ export default function Home() {
           secondParsed != null && Number.isFinite(secondParsed)
             ? secondParsed
             : null,
+        sampleFps: sampleFps === "2" ? 2 : 1,
+        includeFixed,
         onUploadProgress: setUploadPercent,
       });
       setUploadPercent(null);
@@ -1242,6 +1246,42 @@ export default function Home() {
                       Vacío = detección automática. Los segundos son de este
                       archivo (no copies offsets de otro partido).
                     </p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="sample-fps" className="text-xs">
+                          Muestreo LED
+                        </Label>
+                        <Select
+                          value={sampleFps}
+                          onValueChange={(value) =>
+                            setSampleFps(value === "2" ? "2" : "1")
+                          }
+                          disabled={Boolean(isBusy)}
+                        >
+                          <SelectTrigger id="sample-fps" className="h-10 bg-background/60">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">1 fps (rápido)</SelectItem>
+                            <SelectItem value="2">
+                              2 fps (informe preciso)
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <label className="flex items-end gap-2 pb-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          className="size-4 rounded border-border"
+                          checked={includeFixed}
+                          disabled={Boolean(isBusy)}
+                          onChange={(event) =>
+                            setIncludeFixed(event.target.checked)
+                          }
+                        />
+                        Incluir vallas fijas (opcional)
+                      </label>
+                    </div>
                   </div>
                 ) : null}
                 </div>

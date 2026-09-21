@@ -388,6 +388,7 @@ class JobManager:
                 ),
                 should_cancel=record.cancel_event.is_set,
                 include_fixed=record.config.include_fixed,
+                sample_fps=record.config.sample_fps,
             )
         )
 

@@ -101,6 +101,13 @@ class JobConfig(BaseModel):
     def validate_duration_mode(cls, value: str) -> str:
         return normalize_duration_mode(value)
 
+    @field_validator("sample_fps")
+    @classmethod
+    def validate_sample_fps(cls, value: int) -> int:
+        if value not in {1, 2}:
+            raise ValueError("sample_fps debe ser 1 o 2.")
+        return value
+
     @model_validator(mode="after")
     def default_stadium_id(self) -> "JobConfig":
         if self.stadium_id is None:

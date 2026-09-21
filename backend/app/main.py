@@ -632,6 +632,7 @@ async def create_job(request: Request) -> dict[str, str]:
     kickoff_offset_raw = form.get("kickoff_offset_sec")
     second_half_raw = form.get("second_half_start_sec")
     include_fixed_raw = form.get("include_fixed")
+    sample_fps_raw = form.get("sample_fps")
     playlist_upload = form.get("playlist")
 
     if mode not in {"single", "split"}:
@@ -678,6 +679,18 @@ async def create_job(request: Request) -> dict[str, str]:
     include_fixed = False
     if isinstance(include_fixed_raw, str) and include_fixed_raw.strip():
         include_fixed = include_fixed_raw.strip().lower() in {"1", "true", "yes", "on"}
+    sample_fps = 1
+    if isinstance(sample_fps_raw, str) and sample_fps_raw.strip():
+        try:
+            sample_fps = int(sample_fps_raw.strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="sample_fps debe ser 1 o 2."
+            ) from exc
+        if sample_fps not in {1, 2}:
+            raise HTTPException(
+                status_code=422, detail="sample_fps debe ser 1 o 2."
+            )
 
     if brands_raw is None or brands_raw == "":
         brands_raw = "[]"
@@ -827,7 +840,7 @@ async def create_job(request: Request) -> dict[str, str]:
         config = JobConfig(
             mode=mode,
             duration_mode=duration_mode,
-            sample_fps=1,
+            sample_fps=sample_fps,
             stadium_id=stadium_id,
             analysis_mode=analysis_mode,
             kickoff_offset_sec=kickoff_offset_sec,

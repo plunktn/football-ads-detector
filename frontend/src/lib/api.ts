@@ -695,6 +695,8 @@ type SubmitJobInput = {
   analysisMode?: AnalysisMode;
   kickoffOffsetSec?: number | null;
   secondHalfStartSec?: number | null;
+  sampleFps?: 1 | 2;
+  includeFixed?: boolean;
   onUploadProgress?: (percent: number) => void;
 };
 
@@ -707,6 +709,8 @@ export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> 
   form.append("duration_mode", input.durationMode);
   form.append("stadium_id", input.stadiumId);
   form.append("analysis_mode", input.analysisMode ?? "discovery");
+  form.append("sample_fps", String(input.sampleFps ?? 1));
+  form.append("include_fixed", input.includeFixed ? "true" : "false");
   form.append(
     "brands",
     JSON.stringify(

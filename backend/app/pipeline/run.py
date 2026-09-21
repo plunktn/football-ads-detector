@@ -39,10 +39,12 @@ class AnalysisWindow:
     half: str
     start_seconds: float
     end_seconds: float
+    sample_interval: float = 1.0
 
     @property
     def sample_count(self) -> int:
-        return max(0, int((self.end_seconds - self.start_seconds - 1e-9) // 1) + 1)
+        step = self.sample_interval if self.sample_interval > 0 else 1.0
+        return max(0, int((self.end_seconds - self.start_seconds - 1e-9) // step) + 1)
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,7 @@ def build_analysis_windows(
     mode: str,
     duration_mode: str,
     kickoff: Kickoff,
+    sample_interval: float = 1.0,
 ) -> list[AnalysisWindow]:
     """Build the exact video ranges allowed by the selected duration mode."""
     if not video_paths:
@@ -146,15 +149,20 @@ def build_analysis_windows(
     paths = [Path(path) for path in video_paths]
     infos = [get_video_info(path) for path in paths]
     first_start = max(0.0, kickoff.first_half_video_seconds)
+    step = sample_interval if sample_interval > 0 else 1.0
     windows: list[AnalysisWindow] = []
 
     if mode == "split" and len(paths) >= 2:
         first_end = _bounded_end(infos[0], first_start, duration)
-        windows.append(AnalysisWindow(paths[0], "1T", first_start, first_end))
+        windows.append(
+            AnalysisWindow(paths[0], "1T", first_start, first_end, step)
+        )
         if is_full:
             second_start = max(0.0, kickoff.second_half_video_seconds or 0.0)
             second_end = _bounded_end(infos[1], second_start, None)
-            windows.append(AnalysisWindow(paths[1], "2T", second_start, second_end))
+            windows.append(
+                AnalysisWindow(paths[1], "2T", second_start, second_end, step)
+            )
         return [window for window in windows if window.end_seconds > window.start_seconds]
 
     first_end: float
@@ -171,11 +179,13 @@ def build_analysis_windows(
             )
     else:
         first_end = _bounded_end(infos[0], first_start, duration)
-    windows.append(AnalysisWindow(paths[0], "1T", first_start, first_end))
+    windows.append(AnalysisWindow(paths[0], "1T", first_start, first_end, step))
 
     if is_full and second_start is not None and second_start > first_start:
         second_end = _bounded_end(infos[0], second_start, None)
-        windows.append(AnalysisWindow(paths[0], "2T", second_start, second_end))
+        windows.append(
+            AnalysisWindow(paths[0], "2T", second_start, second_end, step)
+        )
 
     return [window for window in windows if window.end_seconds > window.start_seconds]
 
@@ -223,20 +233,24 @@ def run_analysis(
     playlist_slots: Sequence[PlaylistSlot] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     include_fixed: bool = False,
+    sample_fps: int = 1,
 ) -> AnalysisOutput:
-    """Analyze selected windows at one sample per second.
+    """Analyze selected windows at ``sample_fps`` samples per second.
 
-    discovery: 1 fps scan of LED (+ optional fixed bands).
+    discovery: LED scan (+ optional fixed bands).
     playlist_verify: same scan, then hit/miss each 1T/2T playlist slot.
     Non-usable shots (close-up / bumper / wide) never add LED seconds.
     """
     if should_cancel is not None and should_cancel():
         raise JobCancelled("Detenido por el usuario")
+    fps = max(1, int(sample_fps))
+    sample_interval = 1.0 / float(fps)
     windows = build_analysis_windows(
         video_paths,
         mode=mode,
         duration_mode=duration_mode,
         kickoff=kickoff,
+        sample_interval=sample_interval,
     )
     total_samples = sum(window.sample_count for window in windows)
     prepared = prepare_brands(list(brands))
@@ -260,7 +274,7 @@ def run_analysis(
                     logger.warning(
                         "Could not decode %s at %.1fs", window.path.name, t
                     )
-                    t += SAMPLE_INTERVAL_SECONDS
+                    t += sample_interval
                     continue
 
                 shot = classify_shot(frame, camera_profile)
@@ -424,13 +438,14 @@ def run_analysis(
                             partial_brands=aggregate_observations(
                                 led_partial,
                                 brand_pairs,
+                                sample_interval=sample_interval,
                             ),
                             observation_snapshot=(
                                 tuple(observations) if flush_catalog else None
                             ),
                         )
                     )
-                t += SAMPLE_INTERVAL_SECONDS
+                t += sample_interval
         finally:
             cap.release()
 
@@ -441,8 +456,12 @@ def run_analysis(
         item for item in observations if item.tipo_panel == "FIXED_PRINT"
     ]
     led_brands, fixed_brands = _annotate_panel_kinds(
-        aggregate_observations(led_obs, brand_pairs),
-        aggregate_observations(fixed_obs, brand_pairs),
+        aggregate_observations(
+            led_obs, brand_pairs, sample_interval=sample_interval
+        ),
+        aggregate_observations(
+            fixed_obs, brand_pairs, sample_interval=sample_interval
+        ),
     )
 
     compliance = []
