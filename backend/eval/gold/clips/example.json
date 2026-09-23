@@ -1,0 +1,34 @@
+{
+  "clip_id": "example-format-only",
+  "video": null,
+  "notes": "Formato de ejemplo. No incluye video ni salida del detector. Estos segundos no son una medición de accuracy.",
+  "labels": [
+    {
+      "brand": "NETT plus",
+      "brand_id": "nett",
+      "half": "1T",
+      "start_s": 12.0,
+      "end_s": 27.0,
+      "quality": "good",
+      "doubtful": false
+    },
+    {
+      "brand": "ECUABET",
+      "brand_id": "ecuabet",
+      "half": "1T",
+      "start_s": 40.0,
+      "end_s": 48.0,
+      "quality": "ok",
+      "doubtful": false
+    },
+    {
+      "brand": "NETT plus",
+      "brand_id": "nett",
+      "half": "1T",
+      "start_s": 90.0,
+      "end_s": 96.0,
+      "quality": "bad",
+      "doubtful": true
+    }
+  ]
+}

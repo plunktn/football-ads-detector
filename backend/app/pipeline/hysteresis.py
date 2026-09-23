@@ -1,4 +1,9 @@
-"""Temporal smoothing for one-Hz (or denser) LED detections."""
+"""Sample-index gap fill for a uniform boolean timeline.
+
+Commercial LED seconds use the time-based on/off hysteresis in
+``led_timing.py`` (default bridge 8 s, wall-clock duration). This helper
+stays for callers that already collapsed a timeline to one sample per tick.
+"""
 
 from __future__ import annotations
 

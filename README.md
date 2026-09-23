@@ -111,14 +111,69 @@ Crops de depuración en `data/jobs/{id}/debug/`; resultado en
 ## Limitaciones v1
 
 - Muestreo de análisis configurable: **1 fps** (default, discovery barato) o
-  **2 fps** (informe preciso, ~2× CPU). Huecos <1s aún pueden subcontarse a
-  1 fps; preferí 2 fps para duración comercial LED.
+  **2 fps** (~2× CPU). La duración comercial LED fusiona huecos cortos de la
+  misma marca; ver la sección de fusión.
 - Procesamiento local en CPU; paneos, blur o tipografías pequeñas pueden
   fallar el OCR.
 - Fondos de arco y overlays virtuales de broadcast no se inventarian.
 - Discovery no inventa marcas fuera del catálogo o de la playlist.
 - Vallas fijas están desactivadas por defecto (`include_fixed=false`); no
   contaminan el total LED.
+
+## Duración LED: fusión e histéresis
+
+Una aparición continua (u OCR que parpadea) de la **misma marca** en la
+**misma mitad** sale como un solo intervalo. La duración es el tramo de
+reloj: desde el primer hit hasta el final del último sample
+(`último + 1/sample_fps`), hueco puenteado incluido. No se suman migas de
+1–2 s. El Excel (`Resumen LED` / `Salidas LED`) y el informe del catálogo
+usan esos intervalos.
+
+No se fusiona si en el hueco hay otra marca en positivo, ni a través de
+1T/2T. Las vallas fijas siguen con hueco de 3 s y no usan este puente.
+
+| Variable | Default | Efecto |
+| --- | --- | --- |
+| `LED_MERGE_GAP_SEC` | 8 | Hueco máximo, en segundos, que sigue siendo la misma salida. |
+| `LED_OFF_HOLD_SEC` | igual al gap | Ausencia para cerrar la salida (histéresis de apagado). Si es menor que el gap, un segundo paso igual junta huecos hasta el gap cuando no hubo otra marca. |
+| `LED_ON_CONFIRM_SEC` | 0 | Segundos positivos seguidos para abrir (0 = abre con el primer hit). |
+
+Un valor inválido o negativo vuelve al default. El objetivo de auditoría
+(±15–20% en tramos no dudosos) se mide con minutos gold; esta fusión no lo
+garantiza sola.
+
+## Minutos gold
+
+Para comparar el detector con clips etiquetados a mano, sin re-auditar el
+partido:
+
+1. Copia `backend/eval/gold/clips/example.json`.
+2. Completa `labels`: `brand`, `brand_id` si lo tienes, `start_s`, `end_s`,
+   `quality` (`good` \| `ok` \| `bad`) y `doubtful`. Duración = `end_s - start_s`.
+   No solapes la misma marca. No subas el video.
+3. `doubtful: true` marca ilegibles o tramos que no entran al error. `quality`
+   queda anotada y no cambia el cálculo.
+
+```bash
+cd backend
+python eval/gold/compare_gold.py --gold eval/gold/clips/tu_clip.json
+python eval/gold/compare_gold.py \
+  --gold eval/gold/clips/tu_clip.json \
+  --detector data/jobs/<id>/result.json \
+  --tolerance 20
+```
+
+`--detector` puede ser una lista de segmentos o el `result.json` del job
+(solo marcas LED, no fijas).
+
+**Pass:** en tramos no dudosos, el error de duración por marca queda dentro
+de ±15–20% (`--tolerance 20` por defecto; usa `15` para el extremo estricto).
+El script imprime también el % de tiempo etiquetado como dudoso. El ejemplo
+del repo es solo formato: sin `--detector` el error sale `n/a` y no es una
+medición del detector.
+
+Detalle corto en `backend/eval/gold/README.md`.
+
 ## Almacenamiento de jobs
 
 Por defecto, al terminar un análisis exitoso se borran el video subido y la
