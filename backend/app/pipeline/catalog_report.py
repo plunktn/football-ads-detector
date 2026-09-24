@@ -1,11 +1,19 @@
-"""Build a human-readable exposure report from the confirmed catalog."""
+"""Build a human-readable exposure report from the confirmed catalog.
+
+Totals use the same LED merge as the commercial Excel: same brand, same half,
+wall-clock span of the bridged interval. Positive frames of another brand
+inside the hole keep the runs apart.
+"""
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from .. import db
+from .led_timing import LedTiming, PresenceSample, load_led_timing, merge_presence
 
 
 def _clock(seconds: float) -> str:
@@ -32,26 +40,37 @@ def _is_exposure_frame(row: dict[str, Any]) -> bool:
     return label == "positive" or verdict == "assigned"
 
 
-def _segment_frames(frames: list[dict[str, Any]], gap_seconds: float = 2.0) -> list[list[dict[str, Any]]]:
-    if not frames:
-        return []
-    ordered = sorted(
-        frames,
-        key=lambda row: (row.get("half") or "", float(row.get("time_seconds") or 0.0), int(row.get("frame_idx") or 0)),
+def _sample_interval_for_job(job: Any) -> float:
+    directory = job["directory"] if "directory" in job.keys() else None
+    if not directory:
+        return 1.0
+    meta_path = Path(directory) / "meta.json"
+    if not meta_path.is_file():
+        return 1.0
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        fps = float(meta.get("sample_fps") or 1)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return 1.0
+    if fps <= 0:
+        return 1.0
+    return 1.0 / fps
+
+
+def _presence_sample(row: dict[str, Any], *, present: bool, blocked: bool) -> PresenceSample:
+    source_ids: tuple[int, ...] = ()
+    if present and row.get("id") is not None:
+        source_ids = (int(row["id"]),)
+    return PresenceSample(
+        half=str(row.get("half") or ""),
+        time_seconds=float(row.get("time_seconds") or 0.0),
+        present=present,
+        blocked=blocked,
+        frame_idx=int(row.get("frame_idx") or 0),
+        zone_id=row.get("zone_id"),
+        posicion=row.get("posicion"),
+        source_ids=source_ids,
     )
-    segments: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = [ordered[0]]
-    for row in ordered[1:]:
-        prev = current[-1]
-        same_half = (row.get("half") or "") == (prev.get("half") or "")
-        delta = float(row.get("time_seconds") or 0.0) - float(prev.get("time_seconds") or 0.0)
-        if same_half and 0 <= delta <= gap_seconds:
-            current.append(row)
-            continue
-        segments.append(current)
-        current = [row]
-    segments.append(current)
-    return segments
 
 
 def _public_frame(job_id: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -70,7 +89,12 @@ def _public_frame(job_id: str, row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_catalog_report(job_id: str) -> dict[str, Any] | None:
+def build_catalog_report(
+    job_id: str,
+    *,
+    timing: LedTiming | None = None,
+    sample_interval: float | None = None,
+) -> dict[str, Any] | None:
     """Return report payload or None if job missing. Requires confirmed catalog."""
     job = db.get_job_row(job_id)
     if job is None:
@@ -87,29 +111,65 @@ def build_catalog_report(job_id: str) -> dict[str, Any] | None:
             continue
         by_brand[str(row["brand_id"])].append(row)
 
+    resolved = timing or load_led_timing()
+    if sample_interval is None:
+        interval = _sample_interval_for_job(job)
+    else:
+        interval = sample_interval
+
     brands_out: list[dict[str, Any]] = []
     for brand_id, frames in by_brand.items():
         info = library.get(brand_id) or db.get_brand(brand_id)
         name = (info or {}).get("nombre") or brand_id
+        samples = [_presence_sample(row, present=True, blocked=False) for row in frames]
+        for other_id, other_frames in by_brand.items():
+            if other_id == brand_id:
+                continue
+            samples.extend(
+                _presence_sample(row, present=False, blocked=True) for row in other_frames
+            )
+        merged = merge_presence(
+            samples,
+            sample_interval=interval,
+            on_confirm_sec=resolved.on_confirm_sec,
+            off_hold_sec=resolved.off_hold_sec,
+            merge_gap_sec=resolved.merge_gap_sec,
+        )
+        frame_by_id = {int(row["id"]): row for row in frames if row.get("id") is not None}
         segments_out: list[dict[str, Any]] = []
-        for chunk in _segment_frames(frames):
+        for piece in merged:
+            chunk = [
+                frame_by_id[source_id]
+                for source_id in piece.source_ids
+                if source_id in frame_by_id
+            ]
+            if not chunk:
+                chunk = [
+                    row
+                    for row in frames
+                    if str(row.get("half") or "") == piece.half
+                    and piece.start_seconds - 1e-6
+                    <= float(row.get("time_seconds") or 0.0)
+                    <= piece.last_sighting_seconds + 1e-6
+                ]
+            chunk.sort(
+                key=lambda row: (
+                    float(row.get("time_seconds") or 0.0),
+                    int(row.get("frame_idx") or 0),
+                )
+            )
+            if not chunk:
+                continue
             first = chunk[0]
-            last = chunk[-1]
-            start = float(first.get("time_seconds") or 0.0)
-            end = float(last.get("time_seconds") or 0.0)
-            unique_seconds = {
-                int(round(float(item.get("time_seconds") or 0.0))) for item in chunk
-            }
-            duration = max(1, len(unique_seconds))
             sample = _public_frame(job_id, first)
             segments_out.append(
                 {
-                    "half": first.get("half") or "",
-                    "clock_start": _clock(start),
-                    "clock_end": _clock(end),
-                    "video_seconds_start": start,
-                    "video_seconds_end": end,
-                    "duration_seconds": duration,
+                    "half": piece.half,
+                    "clock_start": _clock(piece.start_seconds),
+                    "clock_end": _clock(piece.end_seconds),
+                    "video_seconds_start": piece.start_seconds,
+                    "video_seconds_end": piece.end_seconds,
+                    "duration_seconds": piece.duration_seconds,
                     "posicion": first.get("posicion"),
                     "frame_count": len(chunk),
                     "sample_frame": sample,

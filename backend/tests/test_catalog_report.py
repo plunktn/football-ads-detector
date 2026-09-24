@@ -70,7 +70,7 @@ class CatalogReportTests(unittest.TestCase):
                 {
                     "half": "1T",
                     "frame_idx": 3,
-                    "time_seconds": 20.0,
+                    "time_seconds": 40.0,
                     "crop_relpath": "c.jpg",
                     "machine_label": "positive",
                     "brand_id": "nett",
@@ -104,8 +104,10 @@ class CatalogReportTests(unittest.TestCase):
         self.assertEqual(brand["appearances"], 2)
         self.assertEqual(brand["total_seconds"], 3)
         self.assertEqual(brand["segments"][0]["clock_start"], "00:10")
-        self.assertEqual(brand["segments"][0]["clock_end"], "00:11")
+        # Coverage end is the last 1 s sample (11) plus the sample width.
+        self.assertEqual(brand["segments"][0]["clock_end"], "00:12")
         self.assertEqual(brand["segments"][0]["duration_seconds"], 2)
+        self.assertEqual(brand["segments"][0]["video_seconds_end"], 12.0)
 
 
 if __name__ == "__main__":

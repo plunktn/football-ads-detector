@@ -12,7 +12,8 @@ import cv2
 from ..domain.stadium import CameraProfile
 from ..exceptions import JobCancelled
 from ..schemas import BrandInput, BrandResult, Kickoff, parse_duration_seconds
-from .aggregate import FrameObservation, aggregate_observations
+from .aggregate import FrameObservation, aggregate_led_observations, aggregate_observations
+from .led_timing import load_led_timing
 from .brands import match_brand_ids, match_fixed_brand_ids, prepare_brands
 from .ocr import read_led_hits
 from .playlist import PlaylistSlot, slots_for_verify
@@ -245,6 +246,13 @@ def run_analysis(
         raise JobCancelled("Detenido por el usuario")
     fps = max(1, int(sample_fps))
     sample_interval = 1.0 / float(fps)
+    led_timing = load_led_timing()
+    logger.info(
+        "LED timing merge_gap=%.1fs on_confirm=%.1fs off_hold=%.1fs",
+        led_timing.merge_gap_sec,
+        led_timing.on_confirm_sec,
+        led_timing.off_hold_sec,
+    )
     windows = build_analysis_windows(
         video_paths,
         mode=mode,
@@ -435,10 +443,11 @@ def run_analysis(
                             frame_idx=frame_idx,
                             processed_samples=processed,
                             total_samples=total_samples,
-                            partial_brands=aggregate_observations(
+                            partial_brands=aggregate_led_observations(
                                 led_partial,
                                 brand_pairs,
                                 sample_interval=sample_interval,
+                                timing=led_timing,
                             ),
                             observation_snapshot=(
                                 tuple(observations) if flush_catalog else None
@@ -456,8 +465,11 @@ def run_analysis(
         item for item in observations if item.tipo_panel == "FIXED_PRINT"
     ]
     led_brands, fixed_brands = _annotate_panel_kinds(
-        aggregate_observations(
-            led_obs, brand_pairs, sample_interval=sample_interval
+        aggregate_led_observations(
+            led_obs,
+            brand_pairs,
+            sample_interval=sample_interval,
+            timing=led_timing,
         ),
         aggregate_observations(
             fixed_obs, brand_pairs, sample_interval=sample_interval
