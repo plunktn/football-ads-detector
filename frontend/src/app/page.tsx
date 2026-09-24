@@ -1565,7 +1565,7 @@ export default function Home() {
                   {job.status === "detecting_kickoff"
                     ? "Buscando el saque inicial en el marcador…"
                     : job.status === "completed"
-                      ? `Ventana analizada: ${formatSeconds(job.result?.analyzed_seconds ?? 0)}. Confirma propuestos y asigna lo dudoso.`
+                      ? `Ventana analizada: ${formatSeconds(job.result?.analyzed_seconds ?? 0)}. Revisa solo lo dudoso y confirma.`
                       : job.status === "error"
                         ? job.error ?? "No se pudo completar el análisis."
                         : job.status === "cancelled"

@@ -501,6 +501,7 @@ class JobManager:
                 analyzed_seconds=analysis.analyzed_seconds,
                 include_fixed=record.config.include_fixed,
                 doubtful=analysis.doubtful,
+                unmeasurable=analysis.doubtful_segments,
             )
             result = JobResult(
                 analyzed_seconds=analysis.analyzed_seconds,
@@ -511,6 +512,7 @@ class JobManager:
                 hit_rate=analysis.hit_rate,
                 report_xlsx_path=str(report_path),
                 warnings=list(kickoff_warnings),
+                doubtful_segments=analysis.doubtful_segments,
             )
             record.result = result
             result_path = record.directory / "result.json"

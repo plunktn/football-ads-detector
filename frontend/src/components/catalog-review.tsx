@@ -339,6 +339,11 @@ export function CatalogReview({
 
   if (!catalog) return null;
 
+  const assignable =
+    catalog.assignable_brands?.length > 0
+      ? catalog.assignable_brands
+      : catalog.brands.map((brand) => ({ brand_id: brand.brand_id, name: brand.name }));
+
   const frameCount =
     catalog.progress.positives + catalog.progress.attention + catalog.progress.empty;
   if (live && frameCount === 0) {
@@ -354,15 +359,17 @@ export function CatalogReview({
   };
 
   return (
-    <div id="catalog-top" className="relative space-y-8">
+    <div id="catalog-top" className="relative flex flex-col gap-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold">
-            {live ? "Frames detectados (en vivo)" : "Revisión de catálogo"}
+            {live ? "Frames detectados (en vivo)" : "Cola de revisión"}
           </h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {catalog.progress.positives} propuestos · {catalog.progress.attention} atención ·{" "}
-            {catalog.progress.empty} sin publicidad
+          <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+            Revisa solo lo dudoso o de baja confianza ({catalog.progress.attention}). El tiempo ya
+            medido no entra a esta cola.
+            {" "}
+            {catalog.progress.positives} medidos · {catalog.progress.empty} sin texto
             {catalog.discarded_count
               ? ` · ${catalog.discarded_count} descartados`
               : ""}
@@ -394,7 +401,15 @@ export function CatalogReview({
 
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-      <section aria-labelledby="catalog-positives-heading" className="space-y-4">
+      <section aria-labelledby="catalog-positives-heading" className="order-2 space-y-4">
+        <details className="rounded-xl border border-border/70 bg-card/30 px-4 py-3">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Exposición ya medida ({catalog.progress.positives})
+          </summary>
+          <p className="mb-4 mt-2 text-xs text-muted-foreground">
+            Estos segundos ya salieron de intervalos de reloj. Ábrelos solo si quieres auditar una
+            marca; no hacen falta para cerrar el informe.
+          </p>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 id="catalog-positives-heading" className="text-sm font-semibold">
             Exposición detectada
@@ -457,16 +472,21 @@ export function CatalogReview({
             </div>
           ))
         )}
+        </details>
       </section>
 
       <section
-        id="uncatalogued"
+        id="review-queue"
         aria-labelledby="catalog-uncatalogued-heading"
-        className="scroll-mt-4 space-y-3 rounded-xl border border-border/80 bg-muted/20 p-4"
+        className="order-1 scroll-mt-4 space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
       >
         <h4 id="catalog-uncatalogued-heading" className="text-sm font-semibold">
-          No catalogados
+          Dudosos y baja confianza
         </h4>
+        <p className="text-xs text-muted-foreground">
+          Asigna una marca de interés si reconoces el sponsor. Si sigue ilegible, déjalo aquí: ese
+          tiempo queda como no medible y no entra al margen de ±15–20%.
+        </p>
         <Tabs defaultValue="attention" className="w-full">
           <TabsList className="h-auto bg-muted/60 p-1">
             <TabsTrigger value="attention" className="min-h-9 px-3 text-xs">
@@ -484,13 +504,13 @@ export function CatalogReview({
                   onValueChange={(value) => {
                     if (value) setAssignBrandId(value);
                   }}
-                  disabled={busy || catalog.brands.length === 0}
+                  disabled={busy || assignable.length === 0}
                 >
                   <SelectTrigger className="h-10 min-w-48 bg-background/60">
                     <SelectValue placeholder="Elige una marca" />
                   </SelectTrigger>
                   <SelectContent>
-                    {catalog.brands.map((brand) => (
+                    {assignable.map((brand) => (
                       <SelectItem key={brand.brand_id} value={brand.brand_id}>
                         {brand.name}
                       </SelectItem>
@@ -623,13 +643,13 @@ export function CatalogReview({
                 onValueChange={(value) => {
                   if (value) setAssignBrandId(value);
                 }}
-                disabled={busy || catalog.brands.length === 0}
+                disabled={busy || assignable.length === 0}
               >
                 <SelectTrigger className="h-10 min-w-36 bg-background/80 sm:min-w-44">
                   <SelectValue placeholder="Marca" />
                 </SelectTrigger>
                 <SelectContent className="z-[110]">
-                  {catalog.brands.map((brand) => (
+                  {assignable.map((brand) => (
                     <SelectItem key={brand.brand_id} value={brand.brand_id}>
                       {brand.name}
                     </SelectItem>
@@ -672,10 +692,10 @@ export function CatalogReview({
               variant="secondary"
               size="sm"
               className="h-10 cursor-pointer gap-2 shadow-lg"
-              onClick={() => scrollToId("uncatalogued")}
+              onClick={() => scrollToId("review-queue")}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
-              No catalogados
+              Dudosos
             </Button>
             {!confirmed && !locked ? (
               <Button
@@ -704,8 +724,8 @@ export function CatalogReview({
           Confirmar catálogo
         </h3>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Confirmás el catálogo de este partido. El informe usa solo positivos y
-          asignaciones; los falsos positivos y lo no asignado quedan fuera.
+          Confirmas el catálogo de este partido. El informe suma los segundos medidos.
+          Lo dudoso que no asignes queda fuera de ese total, para revisión.
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button

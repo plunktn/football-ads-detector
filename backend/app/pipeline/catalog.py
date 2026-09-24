@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db
+from ..config.interest_brands import load_interest_brands
 from .aggregate import FrameObservation
 from .brands import PreparedBrand
 from .phash import dhash_from_path, order_by_similarity
@@ -125,6 +126,33 @@ def _ensure_visual_hash(job_dir: Path, row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def assignable_brands_from_meta(job_dir: Path) -> list[dict[str, str]]:
+    """Job brands plus the interest list, so review can assign a canonical name.
+
+    Interest brands stay available even when the detector did not propose them.
+    """
+    found: dict[str, str] = {}
+    meta_path = job_dir / "meta.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+        for item in meta.get("brands") or []:
+            if not isinstance(item, dict):
+                continue
+            brand_id = str(item.get("id") or "").strip()
+            name = str(item.get("name") or brand_id).strip()
+            if brand_id:
+                found[brand_id] = name or brand_id
+    for brand in load_interest_brands():
+        found.setdefault(brand.id, brand.name)
+    return [
+        {"brand_id": brand_id, "name": name}
+        for brand_id, name in sorted(found.items(), key=lambda pair: pair[1].lower())
+    ]
+
+
 def build_catalog_payload(job_id: str) -> dict[str, Any] | None:
     job = db.get_job_row(job_id)
     if job is None:
@@ -170,6 +198,7 @@ def build_catalog_payload(job_id: str) -> dict[str, Any] | None:
         "job_id": job_id,
         "catalog_confirmed_at": confirmed,
         "discarded_count": discarded,
+        "assignable_brands": assignable_brands_from_meta(job_dir),
         "brands": brands_out,
         "attention": attention,
         "empty": empty,

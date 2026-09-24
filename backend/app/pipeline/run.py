@@ -11,8 +11,14 @@ import cv2
 
 from ..domain.stadium import CameraProfile
 from ..exceptions import JobCancelled
-from ..schemas import BrandInput, BrandResult, Kickoff, parse_duration_seconds
+from ..schemas import BrandInput, BrandResult, DoubtfulSegment, Kickoff, parse_duration_seconds
 from .aggregate import FrameObservation, aggregate_led_observations, aggregate_observations
+from .doubtful import (
+    aggregate_unmeasurable,
+    as_public_segment,
+    covers_from_segments,
+    half_origins,
+)
 from .led_timing import load_led_timing
 from .brands import match_brand_ids, match_fixed_brand_ids, prepare_brands
 from .ocr import read_led_hits
@@ -123,6 +129,7 @@ class AnalysisOutput:
     hit_rate: float | None = None
     observations: list[FrameObservation] = field(default_factory=list)
     doubtful: list[DoubtfulObservation] = field(default_factory=list)
+    doubtful_segments: list[DoubtfulSegment] = field(default_factory=list)
 
 
 def _bounded_end(info: VideoInfo, start: float, duration: float | None) -> float:
@@ -475,6 +482,26 @@ def run_analysis(
             fixed_obs, brand_pairs, sample_interval=sample_interval
         ),
     )
+    origins = half_origins(led_obs)
+    measured_covers = [
+        cover
+        for brand in led_brands
+        for cover in covers_from_segments(brand.segments)
+    ]
+    doubtful_segments = [
+        DoubtfulSegment.model_validate(
+            as_public_segment(
+                interval,
+                origin_seconds=origins.get(interval.half, 0.0),
+            )
+        )
+        for interval in aggregate_unmeasurable(
+            led_obs,
+            sample_interval=sample_interval,
+            timing=led_timing,
+            covers=measured_covers,
+        )
+    ]
 
     compliance = []
     rate = None
@@ -529,4 +556,5 @@ def run_analysis(
         hit_rate=rate,
         observations=observations,
         doubtful=doubtful,
+        doubtful_segments=doubtful_segments,
     )

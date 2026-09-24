@@ -119,6 +119,43 @@ class GoldCompareTests(unittest.TestCase):
         self.assertAlmostEqual(report.doubtful_pct or 0, 100.0 * 6 / 29)
         self.assertIn("n/a", compare_gold.format_report(report))
 
+    def test_detector_unmeasurable_time_is_excluded_from_the_error(self) -> None:
+        labels = [
+            {
+                "brand": "NETT plus",
+                "brand_id": "nett",
+                "start_s": 0,
+                "end_s": 10,
+                "doubtful": False,
+            }
+        ]
+        detector = [
+            {"brand_id": "nett", "brand": "NETT plus", "start_s": 0, "end_s": 6},
+        ]
+        doubtful = [
+            {
+                "half": "1T",
+                "start_s": 6,
+                "end_s": 10,
+                "doubtful": True,
+                "measurable": False,
+                "reason": "illegible_ocr",
+            }
+        ]
+        report = compare_gold.compare_minutes(
+            labels,
+            detector,
+            tolerance_pct=20,
+            detector_doubtful=doubtful,
+        )
+        score = report.brands[0]
+        self.assertAlmostEqual(score.gold_seconds, 6.0)
+        self.assertAlmostEqual(score.detector_seconds or 0, 6.0)
+        self.assertAlmostEqual(score.error_pct or 0, 0.0)
+        self.assertAlmostEqual(report.detector_unmeasurable_seconds, 4.0)
+        self.assertTrue(report.passed)
+        self.assertIn("no medible", compare_gold.format_report(report))
+
 
 if __name__ == "__main__":
     unittest.main()
