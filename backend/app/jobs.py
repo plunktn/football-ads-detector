@@ -15,7 +15,7 @@ from .pipeline.playlist import parse_playlist
 from .pipeline.report import write_commercial_report
 from .pipeline.catalog import persist_catalog
 from .pipeline.run import AnalysisUpdate, run_analysis, save_job_preview_frame
-from .pipeline.scoreboard import resolve_kickoff
+from .pipeline.scoreboard import resolve_kickoff, second_half_omitted_message
 from .schemas import (
     BrandInput,
     BrandResult,
@@ -246,6 +246,8 @@ class JobManager:
             analysis_mode=meta.get("analysis_mode", "discovery"),
             kickoff_offset_sec=meta.get("kickoff_offset_sec"),
             second_half_start_sec=meta.get("second_half_start_sec"),
+            clock_mode=meta.get("clock_mode") or "reset",
+            clock_profile_id=meta.get("clock_profile_id"),
             include_fixed=bool(meta.get("include_fixed", False)),
         )
         video_paths = [Path(path) for path in meta["video_paths"]]
@@ -463,6 +465,7 @@ class JobManager:
                 record.config.duration_mode,
                 kickoff_offset_sec=record.config.kickoff_offset_sec,
                 second_half_start_sec=record.config.second_half_start_sec,
+                clock_mode=record.config.clock_mode,
                 camera_profile=camera_profile,
                 should_cancel=record.cancel_event.is_set,
             )
@@ -503,6 +506,16 @@ class JobManager:
                 doubtful=analysis.doubtful,
                 unmeasurable=analysis.doubtful_segments,
             )
+            full_match = record.config.duration_mode == "full"
+            second_half_included = (
+                "2T" in analysis.halves if full_match else None
+            )
+            if full_match and second_half_included is False and not any(
+                "no entra al informe" in warning for warning in kickoff_warnings
+            ):
+                kickoff_warnings.append(
+                    second_half_omitted_message(record.config.clock_mode)
+                )
             result = JobResult(
                 analyzed_seconds=analysis.analyzed_seconds,
                 brands=analysis.brands,
@@ -513,6 +526,7 @@ class JobManager:
                 report_xlsx_path=str(report_path),
                 warnings=list(kickoff_warnings),
                 doubtful_segments=analysis.doubtful_segments,
+                second_half_included=second_half_included,
             )
             record.result = result
             result_path = record.directory / "result.json"

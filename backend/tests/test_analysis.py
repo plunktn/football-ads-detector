@@ -11,7 +11,7 @@ from app.pipeline.aggregate import FrameObservation, aggregate_observations
 from app.pipeline.hysteresis import apply_hysteresis
 from app.pipeline.ocr import OcrHit
 from app.pipeline.roi import RoiResult
-from app.pipeline.run import build_analysis_windows, run_analysis
+from app.pipeline.run import FALLBACK_FIRST_HALF_SECONDS, build_analysis_windows, run_analysis
 from app.schemas import BrandInput, Kickoff
 
 
@@ -166,6 +166,95 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(windows[0].half, "1T")
         self.assertEqual(windows[0].start_seconds, 10)
         self.assertEqual(windows[0].end_seconds, 10 + 16 * 60)
+
+    def _long_match(self, video: Path):
+        info = patch("app.pipeline.run.get_video_info")
+        mocked = info.start()
+        self.addCleanup(info.stop)
+        mocked.return_value.duration_seconds = 7200.0
+        mocked.return_value.path = video
+        return mocked
+
+    def test_continuous_clock_without_2t_drops_led_after_the_fallback(self):
+        """Libertad-style file: 2T wall time is ~4145s and the clock does not reset.
+
+        Without an override the sampler stops at kickoff + 47 min, so LED
+        seconds at 4145 never become samples.
+        """
+        video = self._video(2)
+        self._long_match(video)
+        windows = build_analysis_windows(
+            [video],
+            mode="single",
+            duration_mode="full",
+            kickoff=Kickoff(first_half_video_seconds=180),
+        )
+        self.assertEqual([window.half for window in windows], ["1T"])
+        self.assertEqual(
+            windows[0].end_seconds,
+            180 + FALLBACK_FIRST_HALF_SECONDS,
+        )
+        self.assertLess(windows[0].end_seconds, 4145)
+        self.assertFalse(
+            any(window.start_seconds <= 4145 < window.end_seconds for window in windows)
+        )
+
+    def test_2t_override_keeps_led_window_at_4145(self):
+        video = self._video(2)
+        self._long_match(video)
+        windows = build_analysis_windows(
+            [video],
+            mode="single",
+            duration_mode="full",
+            kickoff=Kickoff(
+                first_half_video_seconds=180,
+                second_half_video_seconds=4145,
+                note="overrides_only; continuous_clock",
+            ),
+        )
+        self.assertEqual(
+            [(window.half, window.start_seconds, window.end_seconds) for window in windows],
+            [("1T", 180, 4145), ("2T", 4145, 7200)],
+        )
+        self.assertTrue(
+            any(window.start_seconds <= 4145 < window.end_seconds for window in windows)
+        )
+
+    def test_second_half_override_counts_led_seconds(self):
+        video = self._video(12)
+        crop = np.zeros((32, 100, 3), dtype=np.uint8)
+        roi = RoiResult(False, None, crop, None)
+        with patch(
+            "app.pipeline.run.locate_zones",
+            return_value=[(DEFAULT_PANEL_ZONES[0], roi)],
+        ), patch(
+            "app.pipeline.run.read_led_hits",
+            return_value=[
+                OcrHit(text="NETTPLUS", x_center=0.2),
+                OcrHit(text="NETTPLUS", x_center=0.8),
+            ],
+        ):
+            result = run_analysis(
+                [video],
+                mode="single",
+                duration_mode="full",
+                kickoff=Kickoff(
+                    first_half_video_seconds=1,
+                    second_half_video_seconds=6,
+                ),
+                brands=[BrandInput(id="nett", name="NETT plus")],
+                debug_dir=video.parent / "debug",
+            )
+        halves = {segment.half for segment in result.brands[0].segments}
+        self.assertIn("2T", halves)
+        self.assertIn("2T", result.halves)
+        second = [
+            segment
+            for segment in result.brands[0].segments
+            if segment.half == "2T"
+        ]
+        self.assertGreater(second[0].duration_seconds, 0)
+        self.assertGreater(result.brands[0].total_seconds, second[0].duration_seconds)
 
     def test_run_analysis_uses_one_sample_per_second(self):
         video = self._video(3)

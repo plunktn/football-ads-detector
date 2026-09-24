@@ -31,6 +31,7 @@ import {
   type BrandGroup,
   type BrandResult,
   type BrandSummary,
+  type ClockOverrideProfile,
   type ComplianceRow,
   type DurationMode,
   type Job,
@@ -48,8 +49,10 @@ import {
   getJob,
   jobPreviewUrl,
   listBrandGroups,
+  listClockOverrides,
   listJobs,
   listStadiums,
+  saveClockOverride,
   submitJob,
   watchJob,
 } from "@/lib/api";
@@ -564,6 +567,57 @@ function ResultsTable({
   );
 }
 
+function KickoffSummary({ job }: { job: Job }) {
+  const warnings = job.result?.warnings ?? [];
+  const dropped = job.result?.second_half_included === false;
+  if (!job.kickoff && warnings.length === 0 && !dropped) return null;
+  return (
+    <div className="space-y-2">
+      {job.kickoff ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              Kickoff 1T
+            </p>
+            <p className="mt-1 font-mono text-sm text-foreground">
+              {job.kickoff.first_half_video_seconds.toFixed(1)} s
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              Inicio 2T
+            </p>
+            <p className="mt-1 font-mono text-sm text-foreground">
+              {job.kickoff.second_half_video_seconds == null
+                ? "No cargado"
+                : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {job.kickoff ? (
+        <p className="font-mono text-[11px] text-muted-foreground">
+          Origen: {job.kickoff.note}
+          {job.config.clock_mode === "continuous" ? " · reloj continuo" : ""}
+        </p>
+      ) : null}
+      {dropped ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          El segundo tiempo no entró al informe. Esos segundos de LED no se
+          sumaron.
+        </p>
+      ) : null}
+      {warnings.length > 0 ? (
+        <ul className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function summaryToBrand(brand: BrandSummary): Brand {
   return {
     id: brand.id,
@@ -592,6 +646,11 @@ export default function Home() {
   const [playlist, setPlaylist] = useState<File>();
   const [kickoffOffsetSec, setKickoffOffsetSec] = useState("");
   const [secondHalfStartSec, setSecondHalfStartSec] = useState("");
+  const [clockProfiles, setClockProfiles] = useState<ClockOverrideProfile[]>([]);
+  const [clockProfileId, setClockProfileId] = useState("manual");
+  const [clockMode, setClockMode] = useState<"reset" | "continuous">("reset");
+  const [clockSaveMessage, setClockSaveMessage] = useState<string | null>(null);
+  const [savingClock, setSavingClock] = useState(false);
   const [sampleFps, setSampleFps] = useState<"1" | "2">("1");
   const [includeFixed, setIncludeFixed] = useState(false);
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -709,6 +768,20 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
+    void listClockOverrides()
+      .then((items) => {
+        if (!cancelled) setClockProfiles(items);
+      })
+      .catch(() => {
+        if (!cancelled) setClockProfiles([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     void listStadiums()
       .then((items) => {
         if (!cancelled && items.length) {
@@ -762,6 +835,64 @@ export default function Home() {
     setJobBrandEnabled(next);
   }, [selectedGroupId, brandGroups]);
 
+  const selectedClock = clockProfiles.find((item) => item.id === clockProfileId);
+
+  const applyClockProfile = (profileId: string) => {
+    setClockProfileId(profileId);
+    setClockSaveMessage(null);
+    if (profileId === "manual") return;
+    const profile = clockProfiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    setClockMode(profile.clock_mode === "continuous" ? "continuous" : "reset");
+    setKickoffOffsetSec(
+      profile.kickoff_offset_sec == null ? "" : String(profile.kickoff_offset_sec),
+    );
+    setSecondHalfStartSec(
+      profile.second_half_start_sec == null
+        ? ""
+        : String(profile.second_half_start_sec),
+    );
+  };
+
+  const handleSaveClock = async () => {
+    if (!selectedClock || savingClock) return;
+    const kickoff = kickoffOffsetSec.trim() ? Number(kickoffOffsetSec) : null;
+    const second = secondHalfStartSec.trim() ? Number(secondHalfStartSec) : null;
+    if (
+      (kickoff != null && !Number.isFinite(kickoff)) ||
+      (second != null && !Number.isFinite(second)) ||
+      (kickoff != null && kickoff < 0) ||
+      (second != null && second < 0)
+    ) {
+      setClockSaveMessage("Los segundos tienen que ser números ≥ 0.");
+      return;
+    }
+    if (kickoff != null && second != null && second <= kickoff) {
+      setClockSaveMessage("El inicio de 2T tiene que ser posterior al kickoff de 1T.");
+      return;
+    }
+    setSavingClock(true);
+    setClockSaveMessage(null);
+    try {
+      const saved = await saveClockOverride({
+        ...selectedClock,
+        clock_mode: clockMode,
+        kickoff_offset_sec: kickoff,
+        second_half_start_sec: second,
+      });
+      setClockProfiles((current) =>
+        current.map((item) => (item.id === saved.id ? saved : item)),
+      );
+      setClockSaveMessage("Override guardado en este equipo. No se sincroniza a cloud.");
+    } catch (error) {
+      setClockSaveMessage(
+        error instanceof Error ? error.message : "No se pudo guardar el override.",
+      );
+    } finally {
+      setSavingClock(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!canSubmit || isBusy) return;
     setSubmitting(true);
@@ -797,6 +928,8 @@ export default function Home() {
           secondParsed != null && Number.isFinite(secondParsed)
             ? secondParsed
             : null,
+        clockMode,
+        clockProfileId: clockProfileId === "manual" ? null : clockProfileId,
         sampleFps: sampleFps === "2" ? 2 : 1,
         includeFixed,
         onUploadProgress: setUploadPercent,
@@ -822,6 +955,8 @@ export default function Home() {
             secondParsed != null && Number.isFinite(secondParsed)
               ? secondParsed
               : null,
+          clock_mode: clockMode,
+          clock_profile_id: clockProfileId === "manual" ? null : clockProfileId,
         },
         kickoff: null,
         result: null,
@@ -1208,46 +1343,6 @@ export default function Home() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor="kickoff-offset" className="text-xs">
-                          Offset kickoff 1T (s de archivo)
-                        </Label>
-                        <Input
-                          id="kickoff-offset"
-                          type="number"
-                          min={0}
-                          step={0.1}
-                          placeholder="Auto (marcador)"
-                          value={kickoffOffsetSec}
-                          disabled={Boolean(isBusy)}
-                          className="h-10 bg-background/60 font-mono"
-                          onChange={(event) => setKickoffOffsetSec(event.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label htmlFor="second-half-start" className="text-xs">
-                          Inicio 2T (s de archivo)
-                        </Label>
-                        <Input
-                          id="second-half-start"
-                          type="number"
-                          min={0}
-                          step={0.1}
-                          placeholder="Auto (marcador)"
-                          value={secondHalfStartSec}
-                          disabled={Boolean(isBusy)}
-                          className="h-10 bg-background/60 font-mono"
-                          onChange={(event) =>
-                            setSecondHalfStartSec(event.target.value)
-                          }
-                        />
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Vacío = detección automática. Los segundos son de este
-                      archivo (no copies offsets de otro partido).
-                    </p>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-1.5">
                         <Label htmlFor="sample-fps" className="text-xs">
                           Muestreo LED
                         </Label>
@@ -1286,6 +1381,123 @@ export default function Home() {
                 ) : null}
                 </div>
               </details>
+
+              <Separator className="bg-border/60" />
+
+              <section aria-labelledby="clock-heading">
+                <div className="mb-3">
+                  <h2 id="clock-heading" className="text-sm font-semibold text-foreground">
+                    Kickoff y inicio de 2T
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Segundos de este archivo. Vacío = marcador. Un reloj continuo
+                    no vuelve a 00:00: sin inicio de 2T, el LED de esa mitad no
+                    entra al informe.
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="clock-profile" className="text-xs">
+                      Perfil guardado
+                    </Label>
+                    <Select
+                      value={clockProfileId}
+                      onValueChange={(value) => {
+                        if (value) applyClockProfile(value);
+                      }}
+                      disabled={Boolean(isBusy)}
+                    >
+                      <SelectTrigger id="clock-profile" className="h-10 bg-background/60">
+                        <SelectValue placeholder="Manual" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Manual (solo este análisis)</SelectItem>
+                        {clockProfiles.map((profile) => (
+                          <SelectItem key={profile.id} value={profile.id}>
+                            {profile.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="clock-mode" className="text-xs">
+                      Reloj del partido
+                    </Label>
+                    <Select
+                      value={clockMode}
+                      onValueChange={(value) =>
+                        setClockMode(value === "continuous" ? "continuous" : "reset")
+                      }
+                      disabled={Boolean(isBusy)}
+                    >
+                      <SelectTrigger id="clock-mode" className="h-10 bg-background/60">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="reset">Se reinicia en el 2T</SelectItem>
+                        <SelectItem value="continuous">
+                          Continuo (no vuelve a 00:00)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="kickoff-offset" className="text-xs">
+                      Kickoff 1T (s de archivo)
+                    </Label>
+                    <Input
+                      id="kickoff-offset"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      placeholder="Auto (marcador)"
+                      value={kickoffOffsetSec}
+                      disabled={Boolean(isBusy)}
+                      className="h-10 bg-background/60 font-mono"
+                      onChange={(event) => setKickoffOffsetSec(event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="second-half-start" className="text-xs">
+                      Inicio 2T (s de archivo)
+                    </Label>
+                    <Input
+                      id="second-half-start"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      placeholder={
+                        clockMode === "continuous" ? "Obligatorio si es partido entero" : "Auto (marcador)"
+                      }
+                      value={secondHalfStartSec}
+                      disabled={Boolean(isBusy)}
+                      className="h-10 bg-background/60 font-mono"
+                      onChange={(event) => setSecondHalfStartSec(event.target.value)}
+                    />
+                  </div>
+                </div>
+                <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
+                  {selectedClock?.notes
+                    ? selectedClock.notes
+                    : "Libertad vs Orense usa reloj continuo y el 2T arranca cerca de 4145 s. Ese número es de ese archivo; no lo copies a otro partido."}{" "}
+                  Con un perfil elegido, un campo vacío usa el valor guardado.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9"
+                    disabled={Boolean(isBusy) || !selectedClock || savingClock}
+                    onClick={() => void handleSaveClock()}
+                  >
+                    {savingClock ? "Guardando…" : "Guardar en el perfil"}
+                  </Button>
+                  {clockSaveMessage ? (
+                    <p className="text-[11px] text-muted-foreground">{clockSaveMessage}</p>
+                  ) : null}
+                </div>
+              </section>
 
               <Separator className="bg-border/60" />
 
@@ -1628,40 +1840,7 @@ export default function Home() {
                       Un partido a la vez en esta pestaña. Si necesitas otro, ábrelo en
                       una pestaña nueva.
                     </p>
-                    {job.kickoff ? (
-                      <div className="space-y-2">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                              Kickoff 1T
-                            </p>
-                            <p className="mt-1 font-mono text-sm text-foreground">
-                              {job.kickoff.first_half_video_seconds.toFixed(1)} s
-                            </p>
-                          </div>
-                          <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
-                            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                              Kickoff 2T
-                            </p>
-                            <p className="mt-1 font-mono text-sm text-foreground">
-                              {job.kickoff.second_half_video_seconds == null
-                                ? "No detectado"
-                                : `${job.kickoff.second_half_video_seconds.toFixed(1)} s`}
-                            </p>
-                          </div>
-                        </div>
-                        <p className="font-mono text-[11px] text-muted-foreground">
-                          Origen: {job.kickoff.note}
-                        </p>
-                        {job.result?.warnings && job.result.warnings.length > 0 ? (
-                          <ul className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                            {job.result.warnings.map((warning) => (
-                              <li key={warning}>{warning}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    ) : null}
+                    <KickoffSummary job={job} />
                     <CatalogReview jobId={job.id} live readOnly />
                   </div>
                 ) : null}
@@ -1675,6 +1854,7 @@ export default function Home() {
 
                 {job.status === "completed" ? (
                   <div className="space-y-8">
+                    <KickoffSummary job={job} />
                     <CatalogReview jobId={job.id} />
                     {job.result?.compliance && job.result.compliance.length > 0 ? (
                       <ComplianceTable rows={job.result.compliance} />

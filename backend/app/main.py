@@ -41,6 +41,12 @@ from .sync_config import (
     pull_from_cloud,
     push_to_cloud,
 )
+from .config.clock_overrides import (
+    ClockOverrideError,
+    load_clock_overrides,
+    merge_clock_request,
+    upsert_clock_override,
+)
 from .schemas import (
     BrandGroupSummary,
     BrandInput,
@@ -54,6 +60,7 @@ from .schemas import (
     CatalogFramePatch,
     CatalogReportResponse,
     CatalogResponse,
+    ClockOverrideWrite,
     JobConfig,
     JobSummary,
     StadiumSummary,
@@ -621,6 +628,30 @@ async def delete_brand(brand_id: str) -> Response:
     return Response(status_code=204)
 
 
+@app.get("/clock-overrides")
+async def get_clock_overrides() -> dict[str, list[dict[str, object]]]:
+    """Saved 1T/2T wall-clock overrides. Not part of cloud sync."""
+    profiles = await run_in_threadpool(load_clock_overrides)
+    return {"profiles": [profile.as_dict() for profile in profiles]}
+
+
+@app.put("/clock-overrides/{profile_id}")
+async def put_clock_override(
+    profile_id: str,
+    payload: ClockOverrideWrite,
+) -> dict[str, object]:
+    """Create or replace one local clock profile."""
+    try:
+        saved = await run_in_threadpool(
+            upsert_clock_override,
+            profile_id,
+            payload.model_dump(),
+        )
+    except ClockOverrideError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return saved.as_dict()
+
+
 @app.post("/jobs", status_code=201)
 async def create_job(request: Request) -> dict[str, str]:
     form = await request.form()
@@ -631,6 +662,8 @@ async def create_job(request: Request) -> dict[str, str]:
     analysis_mode_raw = form.get("analysis_mode")
     kickoff_offset_raw = form.get("kickoff_offset_sec")
     second_half_raw = form.get("second_half_start_sec")
+    clock_mode_raw = form.get("clock_mode")
+    clock_profile_raw = form.get("clock_profile_id")
     include_fixed_raw = form.get("include_fixed")
     sample_fps_raw = form.get("sample_fps")
     playlist_upload = form.get("playlist")
@@ -676,6 +709,25 @@ async def create_job(request: Request) -> dict[str, str]:
     second_half_start_sec = _parse_optional_float(
         second_half_raw, "second_half_start_sec"
     )
+    clock_mode_explicit: str | None = None
+    if isinstance(clock_mode_raw, str) and clock_mode_raw.strip():
+        clock_mode_explicit = clock_mode_raw.strip()
+    clock_profile_id = None
+    if isinstance(clock_profile_raw, str) and clock_profile_raw.strip():
+        clock_profile_id = clock_profile_raw.strip()
+    try:
+        merged_clock = merge_clock_request(
+            profile_id=clock_profile_id,
+            kickoff_offset_sec=kickoff_offset_sec,
+            second_half_start_sec=second_half_start_sec,
+            clock_mode=clock_mode_explicit,
+        )
+    except ClockOverrideError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    kickoff_offset_sec = merged_clock.kickoff_offset_sec
+    second_half_start_sec = merged_clock.second_half_start_sec
+    clock_mode = merged_clock.clock_mode
+    clock_profile_id = merged_clock.profile_id
     include_fixed = False
     if isinstance(include_fixed_raw, str) and include_fixed_raw.strip():
         include_fixed = include_fixed_raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -845,6 +897,8 @@ async def create_job(request: Request) -> dict[str, str]:
             analysis_mode=analysis_mode,
             kickoff_offset_sec=kickoff_offset_sec,
             second_half_start_sec=second_half_start_sec,
+            clock_mode=clock_mode,
+            clock_profile_id=clock_profile_id,
             include_fixed=include_fixed,
         )
         meta = {
@@ -855,6 +909,8 @@ async def create_job(request: Request) -> dict[str, str]:
             "playlist_path": str(playlist_path) if playlist_path else None,
             "kickoff_offset_sec": kickoff_offset_sec,
             "second_half_start_sec": second_half_start_sec,
+            "clock_mode": clock_mode,
+            "clock_profile_id": clock_profile_id,
             "include_fixed": include_fixed,
         }
         (directory / "meta.json").write_text(

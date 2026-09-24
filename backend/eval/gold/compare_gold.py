@@ -3,12 +3,13 @@
 This harness does not score a match by itself. It only prints duration error
 on non-doubtful labels and the share of labeled time marked doubtful.
 
-Pass (when a detector file is provided): every brand that has non-doubtful
-gold time is within ``--tolerance`` percent (default 20, the wide end of the
-±15–20% target). Doubtful labels are excluded from that error and reported
-separately. Detector ``doubtful_segments`` (illegible / no medible) are also
-excluded from both sides of the error: that time is for review, not for the
-±15–20% claim. A segment without ``doubtful`` still counts as clean time.
+Pass (when a detector file is provided): every interest brand that has
+non-doubtful gold time is within ``--tolerance`` percent (default 20, the
+wide end of the ±15–20% target). Brands outside ``interest_brands`` are
+printed as ``fuera`` and do not change the result. Doubtful labels
+(``doubtful: true`` or ``measurable: false``) are excluded from that error.
+Detector ``doubtful_segments`` are excluded from both sides. ``expected_seconds``
+must match the measurable label totals or the report is FAIL.
 
 Examples::
 
@@ -40,6 +41,8 @@ class BrandScore:
     detector_seconds: float | None
     error_pct: float | None
     doubtful_pct: float | None
+    in_claim: bool = True
+    status: str = "n/a"
 
 
 @dataclass
@@ -49,6 +52,9 @@ class GoldReport:
     tolerance_pct: float = 20.0
     passed: bool | None = None
     detector_unmeasurable_seconds: float = 0.0
+    excluded_label_seconds: float = 0.0
+    label_error: bool = False
+    interest_scoped: bool = False
     notes: list[str] = field(default_factory=list)
 
 
@@ -78,11 +84,31 @@ def _canonical(row: dict[str, Any]) -> str:
     return ""
 
 
-def _doubtful(row: dict[str, Any]) -> bool:
-    value = row.get("doubtful")
+def _as_bool(value: Any) -> bool | None:
     if isinstance(value, str):
-        return value.strip().casefold() in {"1", "true", "yes", "si", "sí"}
-    return bool(value)
+        token = value.strip().casefold()
+        if token in {"1", "true", "yes", "si", "sí"}:
+            return True
+        if token in {"0", "false", "no"}:
+            return False
+        return None
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _doubtful(row: dict[str, Any]) -> bool:
+    """Unmeasurable rows stay out of the ±15–20% claim.
+
+    ``measurable: false`` means the same thing as ``doubtful: true``.
+    """
+    measurable = _as_bool(row.get("measurable")) if "measurable" in row else None
+    if measurable is False:
+        return True
+    doubtful = _as_bool(row.get("doubtful"))
+    if doubtful is not None:
+        return doubtful
+    return bool(row.get("doubtful"))
 
 
 def _span_seconds(row: dict[str, Any]) -> float | None:
@@ -218,12 +244,30 @@ def detector_rows(payload: Any) -> list[dict[str, Any]]:
     raise ValueError("El detector necesita 'segments' o 'brands' (result.json LED).")
 
 
+def _status_for(
+    *,
+    in_claim: bool,
+    detector_present: bool,
+    error: float | None,
+    tolerance_pct: float,
+) -> str:
+    if not in_claim:
+        return "fuera"
+    if not detector_present or error is None:
+        return "n/a"
+    if abs(error) <= tolerance_pct + 1e-9:
+        return "PASS"
+    return "FAIL"
+
+
 def compare_minutes(
     labels: list[dict[str, Any]],
     detector: list[dict[str, Any]] | None,
     *,
     tolerance_pct: float = 20.0,
     detector_doubtful: list[dict[str, Any]] | None = None,
+    expected_seconds: dict[str, Any] | None = None,
+    interest_brands: list[str] | None = None,
 ) -> GoldReport:
     notes: list[str] = []
     gold_clean: dict[str, list[tuple[float, float, str, bool]]] = {}
@@ -304,7 +348,48 @@ def compare_minutes(
                 continue
             detector_clean.setdefault(canonical, []).append(_timed(row))
 
-    keys = sorted(set(gold_clean) | set(gold_doubt) | set(detector_clean), key=lambda item: display.get(item, item))
+    interest_ids = [_text(item) for item in (interest_brands or []) if _text(item)]
+    claim_keys: set[str] | None = None
+    if interest_ids:
+        claim_keys = set()
+        for name in interest_ids:
+            key = alias.get(name.casefold(), name.casefold())
+            claim_keys.add(key)
+            display.setdefault(key, name)
+
+    label_error = False
+    if expected_seconds:
+        for raw_name, raw_value in expected_seconds.items():
+            name = _text(raw_name)
+            if not name:
+                continue
+            key = alias.get(name.casefold(), name.casefold())
+            display.setdefault(key, name)
+            try:
+                target = float(raw_value)
+            except (TypeError, ValueError):
+                label_error = True
+                notes.append(f"expected_seconds de {name!r} no es un número.")
+                continue
+            actual = gold_clean_seconds.get(key, 0.0)
+            if abs(actual - target) > 0.05:
+                label_error = True
+                notes.append(
+                    f"expected_seconds de {display.get(key, name)} ({target:.1f} s) "
+                    f"no coincide con los tramos medibles ({actual:.1f} s)."
+                )
+
+    extra_keys: set[str] = set(claim_keys or ())
+    if expected_seconds:
+        for raw_name in expected_seconds:
+            name = _text(raw_name)
+            if name:
+                extra_keys.add(alias.get(name.casefold(), name.casefold()))
+
+    keys = sorted(
+        set(gold_clean) | set(gold_doubt) | set(detector_clean) | extra_keys,
+        key=lambda item: display.get(item, item),
+    )
     brands: list[BrandScore] = []
     comparable = False
     within = True
@@ -313,6 +398,7 @@ def compare_minutes(
         doubt = gold_doubt.get(key, 0.0)
         labeled = gold_clean_seconds.get(key, 0.0) + doubt
         doubtful_pct = (100.0 * doubt / labeled) if labeled > 0 else None
+        in_claim = claim_keys is None or key in claim_keys
         if detector is None:
             brands.append(
                 BrandScore(
@@ -321,22 +407,32 @@ def compare_minutes(
                     detector_seconds=None,
                     error_pct=None,
                     doubtful_pct=doubtful_pct,
+                    in_claim=in_claim,
+                    status=_status_for(
+                        in_claim=in_claim,
+                        detector_present=False,
+                        error=None,
+                        tolerance_pct=tolerance_pct,
+                    ),
                 )
             )
             continue
         detected = _remaining(detector_clean.get(key, []), cuts)
+        error: float | None
         if clean > 0:
             error = 100.0 * (detected - clean) / clean
-            comparable = True
-            if abs(error) > tolerance_pct + 1e-9:
-                within = False
+            if in_claim:
+                comparable = True
+                if abs(error) > tolerance_pct + 1e-9:
+                    within = False
         elif detected > 0:
             error = None
-            comparable = True
-            within = False
-            notes.append(
-                f"{display.get(key, key)} tiene tiempo de detector y 0 s de gold no dudoso."
-            )
+            if in_claim:
+                comparable = True
+                within = False
+                notes.append(
+                    f"{display.get(key, key)} tiene tiempo de detector y 0 s de gold no dudoso."
+                )
         else:
             error = None
         brands.append(
@@ -346,14 +442,26 @@ def compare_minutes(
                 detector_seconds=detected,
                 error_pct=error,
                 doubtful_pct=doubtful_pct,
+                in_claim=in_claim,
+                status=_status_for(
+                    in_claim=in_claim,
+                    detector_present=True,
+                    error=error,
+                    tolerance_pct=tolerance_pct,
+                ),
             )
         )
 
+    if tolerance_pct < 15.0 - 1e-9 or tolerance_pct > 20.0 + 1e-9:
+        notes.append(
+            f"La banda comercial es ±15–20%. Esta corrida usa ±{tolerance_pct:.0f}%."
+        )
     if detector is None:
         notes.append("Sin salida del detector: el error % queda en n/a. No es una medición.")
-        passed = None
-    elif not comparable:
-        notes.append("No hay tramos no dudosos para comparar.")
+        passed = False if label_error else None
+    elif label_error or not comparable:
+        if not comparable and not label_error:
+            notes.append("No hay tramos no dudosos para comparar.")
         passed = False
     else:
         passed = within
@@ -365,6 +473,9 @@ def compare_minutes(
         tolerance_pct=tolerance_pct,
         passed=passed,
         detector_unmeasurable_seconds=unmeasurable_seconds,
+        excluded_label_seconds=gold_doubt_total,
+        label_error=label_error,
+        interest_scoped=claim_keys is not None,
         notes=notes,
     )
 
@@ -383,7 +494,13 @@ def _fmt_pct(value: float | None) -> str:
 
 def format_report(report: GoldReport) -> str:
     lines = [
-        f"{'marca':<22} {'gold_s':>8} {'det_s':>8} {'error_%':>10} {'dudoso_%':>10}",
+        "Comparación minutos gold — solo tramos medibles",
+        (
+            "criterio: PASS/FAIL en tramos no dudosos, banda ±15–20%. "
+            "Etiquetas dudosas y doubtful_segments del detector quedan fuera."
+        ),
+        f"banda comercial: ±15–20% (esta corrida usa ±{report.tolerance_pct:.0f}%)",
+        f"{'marca':<22} {'gold_s':>8} {'det_s':>8} {'error_%':>10} {'dudoso_%':>10} {'estado':>8}",
     ]
     for brand in report.brands:
         lines.append(
@@ -391,17 +508,29 @@ def format_report(report: GoldReport) -> str:
             f"{brand.gold_seconds:8.1f} "
             f"{_fmt_seconds(brand.detector_seconds):>8} "
             f"{_fmt_pct(brand.error_pct):>10} "
-            f"{_fmt_pct(brand.doubtful_pct).replace('+', ''):>10}"
+            f"{_fmt_pct(brand.doubtful_pct).replace('+', ''):>10} "
+            f"{brand.status:>8}"
         )
     if report.doubtful_pct is None:
         lines.append("tiempo dudoso: n/a")
     else:
-        lines.append(f"tiempo dudoso (etiquetas): {report.doubtful_pct:.1f}%")
+        lines.append(
+            "tiempo dudoso (etiquetas, excluido del pass): "
+            f"{report.excluded_label_seconds:.1f}s ({report.doubtful_pct:.1f}%)"
+        )
     if report.detector_unmeasurable_seconds > 0:
         lines.append(
             "tiempo no medible (detector, excluido): "
             f"{report.detector_unmeasurable_seconds:.1f}s"
         )
+    else:
+        lines.append("tiempo no medible (detector, excluido): 0.0s")
+    if report.interest_scoped:
+        lines.append(
+            'alcance: marcas de interés. El resto figura como "fuera" y no cambia el pass.'
+        )
+    if report.label_error:
+        lines.append("gold: FAIL (expected_seconds no cuadra con los tramos medibles)")
     if report.passed is None:
         lines.append("pass: n/a (falta el detector)")
     else:
@@ -430,12 +559,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        labels = gold_rows(load_json(args.gold))
+        gold_payload = load_json(args.gold)
+        labels = gold_rows(gold_payload)
         raw_detector = None if args.detector is None else load_json(args.detector)
         detector = None if raw_detector is None else detector_rows(raw_detector)
         detector_doubtful = (
             [] if raw_detector is None else detector_unmeasurable_rows(raw_detector)
         )
+        expected_seconds = None
+        interest_brands = None
+        if isinstance(gold_payload, dict):
+            raw_expected = gold_payload.get("expected_seconds")
+            if isinstance(raw_expected, dict):
+                expected_seconds = raw_expected
+            raw_interest = gold_payload.get("interest_brands")
+            if isinstance(raw_interest, list):
+                interest_brands = [str(item) for item in raw_interest]
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -444,6 +583,8 @@ def main(argv: list[str] | None = None) -> int:
         detector,
         tolerance_pct=args.tolerance,
         detector_doubtful=detector_doubtful,
+        expected_seconds=expected_seconds,
+        interest_brands=interest_brands,
     )
     print(format_report(report))
     if report.passed is None:

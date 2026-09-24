@@ -94,6 +94,8 @@ class JobConfig(BaseModel):
     analysis_mode: AnalysisMode = "discovery"
     kickoff_offset_sec: float | None = None
     second_half_start_sec: float | None = None
+    clock_mode: Literal["reset", "continuous"] = "reset"
+    clock_profile_id: str | None = None
     include_fixed: bool = False
 
     @field_validator("duration_mode")
@@ -365,6 +367,8 @@ class JobResult(BaseModel):
     report_xlsx_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
     doubtful_segments: list[DoubtfulSegment] = Field(default_factory=list)
+    # False on a full-match run whose 2T window was not sampled.
+    second_half_included: bool | None = None
 
 class JobSummaryTotals(BaseModel):
     brand_count: int = 0
@@ -436,6 +440,28 @@ class CalibrationSaveResponse(BaseModel):
     version: int
     yaml_path: str | None = None
     camera: CameraProfile
+
+
+class ClockOverrideWrite(BaseModel):
+    """Body for PUT /clock-overrides/{id}. The id comes from the path."""
+
+    label: str = Field(min_length=1)
+    clock_mode: Literal["reset", "continuous"] = "reset"
+    kickoff_offset_sec: float | None = None
+    second_half_start_sec: float | None = None
+    notes: str = ""
+
+    @field_validator("label", "notes")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("kickoff_offset_sec", "second_half_start_sec")
+    @classmethod
+    def non_negative(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("El segundo de reloj no puede ser negativo.")
+        return value
 
 
 class JobEvent(BaseModel):

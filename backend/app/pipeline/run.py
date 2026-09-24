@@ -130,6 +130,7 @@ class AnalysisOutput:
     observations: list[FrameObservation] = field(default_factory=list)
     doubtful: list[DoubtfulObservation] = field(default_factory=list)
     doubtful_segments: list[DoubtfulSegment] = field(default_factory=list)
+    halves: tuple[str, ...] = ()
 
 
 def _bounded_end(info: VideoInfo, start: float, duration: float | None) -> float:
@@ -196,6 +197,15 @@ def build_analysis_windows(
         )
 
     return [window for window in windows if window.end_seconds > window.start_seconds]
+
+
+def halves_of(windows: Sequence[AnalysisWindow]) -> tuple[str, ...]:
+    """Half labels that actually receive samples, in window order."""
+    seen: list[str] = []
+    for window in windows:
+        if window.half not in seen:
+            seen.append(window.half)
+    return tuple(seen)
 
 
 def _brand_pairs(brands: Sequence[BrandInput]) -> list[tuple[str, str]]:
@@ -557,4 +567,5 @@ def run_analysis(
         observations=observations,
         doubtful=doubtful,
         doubtful_segments=doubtful_segments,
+        halves=halves_of(windows),
     )

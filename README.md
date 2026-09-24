@@ -73,10 +73,11 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:43124
 1. Marca **Verificar playlist/reporte** y sube el xlsx multi-hoja
    (`PREVIA` / `PRIMER TIEMPO` / `ENTRETIEMPO` / `SEGUNDO TIEMPO` / `POST`)
    con columnas `CLIENTE`, `MINUTO` (`0.15` = 0:15), `DURACIÓN` (default 15s).
-2. Opcional: override de **offset kickoff 1T** e **inicio 2T** en segundos de
+2. Opcional: override de **kickoff 1T** e **inicio 2T** en segundos de
    archivo (vacío = detección por marcador). Si cargás ambos, el job **no**
    escanea el marcador (`overrides_only`). Los offsets son por partido —
-   no copies un 2T de otro video.
+   no copies un 2T de otro video. El bloque está en el formulario de análisis
+   (también en discovery), no solo dentro de la playlist.
 3. El job fuerza ventana `full` y verifica cada pauta 1T/2T.
 4. Excel: `Resumen LED` | `Salidas LED` | `Cumplimiento` | `Dudosas` | `Extras`
    (hoja `Fijas` solo si `include_fixed=true`).
@@ -99,7 +100,8 @@ Overlays de TV (Zapping, xtrim, SHOWTIME, etc.) no cuentan.
 
 1. Video full match (o 1T+2T split) + playlist Lions xlsx.
 2. Si el kickoff auto falla, fija offsets **medidos en ese archivo** (1T ≈
-   saque; 2T ≈ reinicio tras entretiempo — no reutilices 3521 de otro partido).
+   saque; 2T ≈ reinicio tras entretiempo — no reutilices 3521 ni 4145 de otro
+   partido). Si el marcador no vuelve a 00:00, elige reloj continuo.
 3. Corre `playlist_verify` y abre `informe.xlsx`.
 4. Revisa hoja **Dudosas** antes de tratar un MISS como incumplimiento.
 5. OCR flojo → preferir `AMBIGUOUS` + captura; no inventar métricas.
@@ -175,21 +177,50 @@ el sponsor; si el tramo sigue ilegible, déjalo sin asignar.
 El informe (`/informe`) encabeza los **segundos en pantalla** de las marcas de
 interés. El bloque **No medible** lista solo los rangos que hay que mirar.
 
+## Kickoff y segundo tiempo
+
+Los overrides viven en `backend/config/clock_overrides.yaml` y en
+`GET` / `PUT /clock-overrides/{id}`. Quedan en el equipo del operador: **no**
+entran al sync de marcas/estadios.
+
+| `clock_mode` | Qué hace |
+| --- | --- |
+| `reset` | El marcador vuelve cerca de 00:00 en el 2T. Si no lo encuentra, avisa y el LED de esa mitad no se suma. |
+| `continuous` | El reloj no se reinicia. No se busca una vuelta a 00:00. Sin `second_half_start_sec`, el 2T no entra al informe. |
+
+Hecho de QA: **Libertad vs Orense** es reloj continuo y el 2T del archivo
+completo arranca ≈ **4145 s** de pared. Ese número no es una duración de
+marca y no se aplica solo: hay que elegir el perfil (o escribir el segundo).
+El kickoff de 1T de ese archivo todavía hay que medirlo.
+
+Si el partido es `full` y el 2T no entra, el resultado trae
+`second_half_included: false` y un warning. Esos segundos no se suman en
+silencio.
+
 ## Minutos gold
 
 Para comparar el detector con clips etiquetados a mano, sin re-auditar el
 partido:
 
-1. Copia `backend/eval/gold/clips/example.json`.
-2. Completa `labels`: `brand`, `brand_id` si lo tienes, `start_s`, `end_s`,
-   `quality` (`good` \| `ok` \| `bad`) y `doubtful`. Duración = `end_s - start_s`.
-   No solapes la misma marca. No subas el video.
-3. `doubtful: true` marca ilegibles o tramos que no entran al error. `quality`
-   queda anotada y no cambia el cálculo.
+1. Copia `backend/eval/gold/clips/example.json` o parte de
+   `clips/synthetic_interest.json`.
+2. Completa `labels`: `brand`, `brand_id`, `start_s`, `end_s` (segundos del
+   reproductor, no el índice de frame), `quality` (`good` \| `ok` \| `bad`),
+   `doubtful` y `measurable`. Duración = `end_s - start_s`. No solapes la
+   misma marca. No subas el video.
+3. `doubtful: true` o `measurable: false` = ilegible. No entra al error.
+4. En `interest_brands` lista los ids de `interest_brands.yaml`. En
+   `expected_seconds` escribe la suma medible de cada una. Si no cuadra con
+   las filas, el reporte es FAIL.
+5. `synthetic_interest.json` es un fixture inventado. No lo cites como
+   medición de un partido.
 
 ```bash
 cd backend
-python eval/gold/compare_gold.py --gold eval/gold/clips/tu_clip.json
+python eval/gold/compare_gold.py \
+  --gold eval/gold/clips/synthetic_interest.json \
+  --detector eval/gold/fixtures/synthetic_interest_detector.json \
+  --tolerance 15
 python eval/gold/compare_gold.py \
   --gold eval/gold/clips/tu_clip.json \
   --detector data/jobs/<id>/result.json \
@@ -197,16 +228,15 @@ python eval/gold/compare_gold.py \
 ```
 
 `--detector` puede ser una lista de segmentos o el `result.json` del job
-(solo marcas LED, no fijas).
+(marcas LED y `doubtful_segments`; las fijas no entran).
 
-**Pass:** en tramos no dudosos, el error de duración por marca queda dentro
-de ±15–20% (`--tolerance 20` por defecto; usa `15` para el extremo estricto).
-El script imprime también el % de tiempo etiquetado como dudoso. Si el
-`result.json` trae `doubtful_segments`, ese tiempo no medible se excluye del
-error. El ejemplo del repo es solo formato: sin `--detector` el error sale
-`n/a` y no es una medición del detector.
+**Pass:** en tramos no dudosos de las marcas de interés, el error de duración
+queda dentro de ±15–20% (`--tolerance 20` por defecto; `15` es el extremo
+estricto). El reporte dice PASS o FAIL, cuántos segundos dudosos quedaron
+fuera y cuántos `doubtful_segments` del detector se restaron. Sin
+`--detector` el error sale `n/a`.
 
-Detalle corto en `backend/eval/gold/README.md`.
+Cómo etiquetar un clip real: `backend/eval/gold/README.md`.
 
 ## Almacenamiento de jobs
 

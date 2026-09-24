@@ -207,18 +207,37 @@ def resolve_kickoff(
     *,
     kickoff_offset_sec: float | None = None,
     second_half_start_sec: float | None = None,
+    clock_mode: str | None = None,
     camera_profile: CameraProfile | None = None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> tuple[Kickoff, list[str]]:
     """Resolve kickoff using operator overrides when present; skip OCR scan if both given.
 
     Returns ``(kickoff, warnings)``. Warnings are operator-facing strings (e.g. missing 2T).
-    Never reuse a fixed second-half second like 3521 across matches.
+    ``clock_mode="continuous"`` never scans for a reset to 00:00. Without
+    ``second_half_start_sec`` the 2T LED window is omitted and the warning says so.
+    Never reuse a fixed second-half second like 3521 or 4145 across matches.
     """
     warnings: list[str] = []
+    mode_norm = _normalize_clock_mode(clock_mode)
     need_second_half = duration_mode == "full"
     has_1t = kickoff_offset_sec is not None
     has_2t = second_half_start_sec is not None
+    continuous = mode_norm == "continuous"
+
+    def finish(kickoff: Kickoff) -> tuple[Kickoff, list[str]]:
+        if (
+            has_1t
+            and has_2t
+            and float(second_half_start_sec) <= float(kickoff_offset_sec)
+        ):
+            warnings.append(_second_half_order_message())
+        past_end = _warn_if_second_half_past_end(
+            video_paths, mode, kickoff.second_half_video_seconds
+        )
+        if past_end:
+            warnings.append(past_end)
+        return _with_clock_note(kickoff, mode_norm), warnings
 
     if has_1t and (has_2t or not need_second_half):
         kickoff = Kickoff(
@@ -228,12 +247,15 @@ def resolve_kickoff(
             ),
             note="overrides_only",
         )
-        return kickoff, warnings
+        return finish(kickoff)
 
     if has_1t and need_second_half and not has_2t:
         first = float(kickoff_offset_sec)
         second = None
-        if video_paths:
+        if continuous:
+            warnings.append(second_half_omitted_message("continuous"))
+            note = "kickoff_offset_sec; continuous_clock; 2T no cargado"
+        elif video_paths:
             path = video_paths[0] if mode != "split" else (
                 video_paths[1] if len(video_paths) >= 2 else video_paths[0]
             )
@@ -256,21 +278,24 @@ def resolve_kickoff(
                     camera_profile=camera_profile,
                     should_cancel=should_cancel,
                 )
-        if second is None:
-            warnings.append(
-                "2T no detectado tras override de 1T; mide el inicio del 2T "
-                "en ESTE archivo (no copies 3521 de otro partido)."
-            )
-            note = "kickoff_offset_sec; 2T scan failed"
+            if second is None:
+                warnings.append(
+                    "2T no detectado tras override de 1T; el LED del segundo "
+                    "tiempo no entra al informe. Mide el inicio en ESTE archivo "
+                    "(no copies 3521 ni 4145 de otro partido)."
+                )
+                note = "kickoff_offset_sec; 2T scan failed"
+            else:
+                note = "kickoff_offset_sec; 2T detectado por marcador"
         else:
-            note = "kickoff_offset_sec; 2T detectado por marcador"
-        return (
+            warnings.append(second_half_omitted_message(mode_norm))
+            note = "kickoff_offset_sec; 2T scan failed"
+        return finish(
             Kickoff(
                 first_half_video_seconds=first,
                 second_half_video_seconds=second,
                 note=note,
-            ),
-            warnings,
+            )
         )
 
     if has_2t and not has_1t:
@@ -280,6 +305,7 @@ def resolve_kickoff(
             duration_mode,
             camera_profile=camera_profile,
             should_cancel=should_cancel,
+            clock_mode=mode_norm,
         )
         kickoff = apply_kickoff_overrides(
             kickoff,
@@ -289,7 +315,7 @@ def resolve_kickoff(
             warnings.append(
                 "1T usó detección/fallback; revisá el offset de kickoff de este partido."
             )
-        return kickoff, warnings
+        return finish(kickoff)
 
     kickoff = detect_kickoffs(
         video_paths,
@@ -297,13 +323,70 @@ def resolve_kickoff(
         duration_mode,
         camera_profile=camera_profile,
         should_cancel=should_cancel,
+        clock_mode=mode_norm,
     )
     if need_second_half and kickoff.second_half_video_seconds is None:
-        warnings.append(
-            "2T no detectado por marcador; cargá second_half_start_sec medido "
-            "en este video (offsets no son portables entre partidos)."
+        warnings.append(second_half_omitted_message(mode_norm))
+    return finish(kickoff)
+
+
+def second_half_omitted_message(clock_mode: str = "reset") -> str:
+    """Operator warning when a full-match run will not count 2T LED time."""
+    if clock_mode == "continuous":
+        return (
+            "Reloj continuo: no hay vuelta a 00:00 y el 2T no se detecta solo. "
+            "El LED del segundo tiempo no entra al informe hasta que cargues "
+            "second_half_start_sec de ESTE archivo "
+            "(Libertad vs Orense ≈ 4145 s; no lo copies a otro partido)."
         )
-    return kickoff, warnings
+    return (
+        "2T no detectado por marcador; el LED del segundo tiempo no entra al informe. "
+        "Cargá second_half_start_sec medido en este video "
+        "(offsets no son portables entre partidos)."
+    )
+
+
+def _second_half_past_end_message() -> str:
+    return (
+        "El inicio de 2T cae al final o después del archivo; "
+        "el LED del segundo tiempo no entra al informe."
+    )
+
+
+def _second_half_order_message() -> str:
+    return (
+        "El inicio de 2T no es posterior al kickoff de 1T; "
+        "el LED del segundo tiempo no entra al informe."
+    )
+
+
+def _normalize_clock_mode(clock_mode: str | None) -> str:
+    mode = (clock_mode or "reset").strip().lower()
+    if mode not in {"reset", "continuous"}:
+        return "reset"
+    return mode
+
+
+def _warn_if_second_half_past_end(
+    video_paths: list[str | Path],
+    mode: str,
+    second_half_start_sec: float | None,
+) -> str | None:
+    if second_half_start_sec is None or not video_paths or mode == "split":
+        return None
+    try:
+        duration = get_video_info(video_paths[0]).duration_seconds
+    except ValueError:
+        return None
+    if float(second_half_start_sec) >= duration - 1e-6:
+        return _second_half_past_end_message()
+    return None
+
+
+def _with_clock_note(kickoff: Kickoff, clock_mode: str) -> Kickoff:
+    if clock_mode != "continuous" or "continuous_clock" in kickoff.note:
+        return kickoff
+    return kickoff.model_copy(update={"note": f"{kickoff.note}; continuous_clock"})
 
 
 def detect_kickoffs(
@@ -312,6 +395,8 @@ def detect_kickoffs(
     duration_mode: str = "full",
     camera_profile: CameraProfile | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    *,
+    clock_mode: str = "reset",
 ) -> Kickoff:
     """Detect kickoff positions for single or split uploads.
 
@@ -322,6 +407,7 @@ def detect_kickoffs(
     if not video_paths:
         return Kickoff(note="fallback t=0")
 
+    clock_mode = _normalize_clock_mode(clock_mode)
     need_second_half = duration_mode == "full"
 
     if mode == "split" and len(video_paths) >= 2:
@@ -372,7 +458,10 @@ def detect_kickoffs(
         duration = get_video_info(path).duration_seconds
     except ValueError:
         duration = 0.0
-    if need_second_half and first is not None:
+    # A continuous clock never resets to 00:00, so a reset scan cannot find 2T
+    # and must not drop that half in silence. The operator supplies the wall
+    # second (Libertad vs Orense ≈ 4145).
+    if need_second_half and first is not None and clock_mode != "continuous":
         second = _detect_second_half_single(
             path,
             first,
