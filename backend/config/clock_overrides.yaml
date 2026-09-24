@@ -1,0 +1,18 @@
+# Overrides durables de kickoff / 2T.
+# Segundos de pared de ESTE archivo de video. No viajan por el sync de cloud
+# y no se copian a otro partido.
+# clock_mode:
+#   reset       — el marcador vuelve cerca de 00:00 al empezar el 2T
+#   continuous  — el reloj no se reinicia; sin second_half_start_sec el LED
+#                 del segundo tiempo no entra al informe
+profiles:
+  - id: libertad-vs-orense
+    label: Libertad vs Orense
+    clock_mode: continuous
+    kickoff_offset_sec: null
+    # Hecho de QA del reloj (no es una medición de segundos LED).
+    second_half_start_sec: 4145
+    notes: >-
+      Reloj continuo: no vuelve a 00:00 en el entretiempo.
+      El inicio de 2T en el archivo completo es ≈ 4145 s de pared.
+      El kickoff de 1T hay que medirlo en este archivo.

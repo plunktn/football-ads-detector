@@ -156,6 +156,120 @@ class GoldCompareTests(unittest.TestCase):
         self.assertTrue(report.passed)
         self.assertIn("no medible", compare_gold.format_report(report))
 
+    def test_measurable_false_is_excluded_like_doubtful(self) -> None:
+        labels = [
+            {
+                "brand_id": "nett",
+                "brand": "NETT plus",
+                "start_s": 0,
+                "end_s": 10,
+                "measurable": False,
+            },
+            {
+                "brand_id": "nett",
+                "brand": "NETT plus",
+                "start_s": 10,
+                "end_s": 20,
+                "measurable": True,
+            },
+        ]
+        detector = [{"brand_id": "nett", "start_s": 10, "end_s": 20}]
+        report = compare_gold.compare_minutes(labels, detector, tolerance_pct=15)
+        self.assertAlmostEqual(report.brands[0].gold_seconds, 10.0)
+        self.assertAlmostEqual(report.excluded_label_seconds, 10.0)
+        self.assertTrue(report.passed)
+        self.assertIn("excluido del pass", compare_gold.format_report(report))
+
+    def _synthetic_paths(self) -> tuple[Path, Path]:
+        root = Path(__file__).resolve().parents[1] / "eval" / "gold"
+        return (
+            root / "clips" / "synthetic_interest.json",
+            root / "fixtures" / "synthetic_interest_detector.json",
+        )
+
+    def test_synthetic_interest_clip_passes_inside_15_percent(self) -> None:
+        gold_path, detector_path = self._synthetic_paths()
+        gold = compare_gold.load_json(gold_path)
+        detector = compare_gold.load_json(detector_path)
+        self.assertTrue(gold["synthetic"])
+        self.assertIsNone(gold["video"])
+        self.assertEqual(gold["second_half_start_sec"], 4145)
+        self.assertNotIn("sponsor-local", gold["interest_brands"])
+        report = compare_gold.compare_minutes(
+            compare_gold.gold_rows(gold),
+            compare_gold.detector_rows(detector),
+            tolerance_pct=15,
+            detector_doubtful=compare_gold.detector_unmeasurable_rows(detector),
+            expected_seconds=gold["expected_seconds"],
+            interest_brands=gold["interest_brands"],
+        )
+        self.assertFalse(report.label_error)
+        self.assertTrue(report.interest_scoped)
+        self.assertTrue(report.passed)
+        by_name = {brand.brand: brand for brand in report.brands}
+        self.assertEqual(by_name["Sponsor local"].status, "fuera")
+        self.assertFalse(by_name["Sponsor local"].in_claim)
+        self.assertGreater(abs(by_name["Sponsor local"].error_pct or 0), 20)
+        self.assertEqual(by_name["NETTPLUS"].status, "PASS")
+        self.assertAlmostEqual(by_name["NETTPLUS"].detector_seconds or 0, 36.0)
+        self.assertAlmostEqual(report.detector_unmeasurable_seconds, 18.0)
+        text = compare_gold.format_report(report)
+        self.assertIn("PASS", text)
+        self.assertIn("doubtful_segments", text)
+        self.assertIn("fuera", text)
+        self.assertEqual(
+            compare_gold.main(
+                [
+                    "--gold",
+                    str(gold_path),
+                    "--detector",
+                    str(detector_path),
+                    "--tolerance",
+                    "15",
+                ]
+            ),
+            0,
+        )
+
+    def test_synthetic_nettplus_fails_if_doubtful_segments_are_kept(self) -> None:
+        gold_path, detector_path = self._synthetic_paths()
+        gold = compare_gold.load_json(gold_path)
+        detector = compare_gold.load_json(detector_path)
+        report = compare_gold.compare_minutes(
+            compare_gold.gold_rows(gold),
+            compare_gold.detector_rows(detector),
+            tolerance_pct=20,
+            detector_doubtful=[],
+            expected_seconds=gold["expected_seconds"],
+            interest_brands=gold["interest_brands"],
+        )
+        nett = next(brand for brand in report.brands if brand.brand == "NETTPLUS")
+        self.assertAlmostEqual(nett.detector_seconds or 0, 54.0)
+        self.assertGreater(abs(nett.error_pct or 0), 20)
+        self.assertFalse(report.passed)
+        self.assertIn("FAIL", compare_gold.format_report(report))
+
+    def test_expected_seconds_mismatch_fails_before_the_detector(self) -> None:
+        labels = [
+            {
+                "brand": "Ecuabet",
+                "brand_id": "ecuabet",
+                "start_s": 0,
+                "end_s": 10,
+                "doubtful": False,
+            }
+        ]
+        report = compare_gold.compare_minutes(
+            labels,
+            [{"brand_id": "ecuabet", "start_s": 0, "end_s": 10}],
+            tolerance_pct=15,
+            expected_seconds={"ecuabet": 99},
+            interest_brands=["ecuabet"],
+        )
+        self.assertTrue(report.label_error)
+        self.assertFalse(report.passed)
+        self.assertIn("no coincide", compare_gold.format_report(report))
+
 
 if __name__ == "__main__":
     unittest.main()

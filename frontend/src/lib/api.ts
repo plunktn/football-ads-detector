@@ -80,6 +80,8 @@ export type Job = {
     analysis_mode?: AnalysisMode;
     kickoff_offset_sec?: number | null;
     second_half_start_sec?: number | null;
+    clock_mode?: "reset" | "continuous";
+    clock_profile_id?: string | null;
   };
   kickoff: Kickoff | null;
   result: {
@@ -91,7 +93,17 @@ export type Job = {
     hit_rate?: number | null;
     report_xlsx_path?: string | null;
     warnings?: string[];
+    second_half_included?: boolean | null;
   } | null;
+};
+
+export type ClockOverrideProfile = {
+  id: string;
+  label: string;
+  clock_mode: "reset" | "continuous";
+  kickoff_offset_sec: number | null;
+  second_half_start_sec: number | null;
+  notes: string;
 };
 
 export type ComplianceRow = {
@@ -320,6 +332,40 @@ function apiErrorMessage(body: unknown, fallback: string): string {
 const DEFAULT_STADIUMS: Stadium[] = [
   { id: "ligaecuabet", nombre: "LigaEcuabet (default)" },
 ];
+
+export async function listClockOverrides(): Promise<ClockOverrideProfile[]> {
+  const response = await fetch(`${API_URL}/clock-overrides`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudieron leer los overrides de reloj."));
+  }
+  const profiles = (body as { profiles?: ClockOverrideProfile[] }).profiles;
+  return Array.isArray(profiles) ? profiles : [];
+}
+
+export async function saveClockOverride(
+  profile: ClockOverrideProfile,
+): Promise<ClockOverrideProfile> {
+  const response = await fetch(
+    `${API_URL}/clock-overrides/${encodeURIComponent(profile.id)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: profile.label,
+        clock_mode: profile.clock_mode,
+        kickoff_offset_sec: profile.kickoff_offset_sec,
+        second_half_start_sec: profile.second_half_start_sec,
+        notes: profile.notes,
+      }),
+    },
+  );
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(apiErrorMessage(body, "No se pudo guardar el override de reloj."));
+  }
+  return body as ClockOverrideProfile;
+}
 
 export async function listStadiums(): Promise<Stadium[]> {
   const response = await fetch(`${API_URL}/stadiums`, {
@@ -716,6 +762,8 @@ type SubmitJobInput = {
   analysisMode?: AnalysisMode;
   kickoffOffsetSec?: number | null;
   secondHalfStartSec?: number | null;
+  clockMode?: "reset" | "continuous";
+  clockProfileId?: string | null;
   sampleFps?: 1 | 2;
   includeFixed?: boolean;
   onUploadProgress?: (percent: number) => void;
@@ -760,6 +808,12 @@ export async function submitJob(input: SubmitJobInput): Promise<{ id: string }> 
     Number.isFinite(input.secondHalfStartSec)
   ) {
     form.append("second_half_start_sec", String(input.secondHalfStartSec));
+  }
+  if (input.clockMode) {
+    form.append("clock_mode", input.clockMode);
+  }
+  if (input.clockProfileId) {
+    form.append("clock_profile_id", input.clockProfileId);
   }
   for (const brand of input.brands) {
     if (brand.logo) {

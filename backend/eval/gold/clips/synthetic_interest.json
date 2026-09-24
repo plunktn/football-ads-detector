@@ -1,0 +1,147 @@
+{
+  "clip_id": "synthetic-interest-led",
+  "video": null,
+  "synthetic": true,
+  "clock_mode": "continuous",
+  "kickoff_offset_sec": 180,
+  "second_half_start_sec": 4145,
+  "notes": "Fixture sintético para el harness. NO es una medición del partido Libertad vs Orense ni de ningún partido real. Los 4145 s son el hecho de QA del reloj (inicio de 2T en el archivo), no segundos de marca. Las duraciones de abajo están inventadas para poder correr compare_gold.py.",
+  "interest_brands": [
+    "ecuabet",
+    "nettplus",
+    "lions",
+    "1xbet",
+    "siete-com",
+    "grand-aviation"
+  ],
+  "expected_seconds": {
+    "ecuabet": 48,
+    "nettplus": 36,
+    "lions": 24,
+    "1xbet": 18,
+    "siete-com": 15,
+    "grand-aviation": 12
+  },
+  "labels": [
+    {
+      "brand": "Ecuabet",
+      "brand_id": "ecuabet",
+      "half": "1T",
+      "start_s": 200,
+      "end_s": 232,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "Ecuabet",
+      "brand_id": "ecuabet",
+      "half": "2T",
+      "start_s": 4300,
+      "end_s": 4316,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "Ecuabet",
+      "brand_id": "ecuabet",
+      "half": "2T",
+      "start_s": 4500,
+      "end_s": 4508,
+      "quality": "bad",
+      "doubtful": true,
+      "measurable": false
+    },
+    {
+      "brand": "NETTPLUS",
+      "brand_id": "nettplus",
+      "half": "1T",
+      "start_s": 500,
+      "end_s": 530,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "NETTPLUS",
+      "brand_id": "nettplus",
+      "half": "2T",
+      "start_s": 4600,
+      "end_s": 4606,
+      "quality": "ok",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "NETTPLUS",
+      "brand_id": "nettplus",
+      "half": "1T",
+      "start_s": 530,
+      "end_s": 548,
+      "quality": "bad",
+      "doubtful": true,
+      "measurable": false
+    },
+    {
+      "brand": "LIONS",
+      "brand_id": "lions",
+      "half": "1T",
+      "start_s": 800,
+      "end_s": 818,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "LIONS",
+      "brand_id": "lions",
+      "half": "2T",
+      "start_s": 4900,
+      "end_s": 4906,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "1xbet",
+      "brand_id": "1xbet",
+      "half": "1T",
+      "start_s": 900,
+      "end_s": 918,
+      "quality": "ok",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "SIETE.COM",
+      "brand_id": "siete-com",
+      "half": "1T",
+      "start_s": 1100,
+      "end_s": 1115,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "GRAND AVIATION",
+      "brand_id": "grand-aviation",
+      "half": "2T",
+      "start_s": 5100,
+      "end_s": 5112,
+      "quality": "good",
+      "doubtful": false,
+      "measurable": true
+    },
+    {
+      "brand": "Sponsor local",
+      "brand_id": "sponsor-local",
+      "half": "1T",
+      "start_s": 600,
+      "end_s": 610,
+      "quality": "ok",
+      "doubtful": false,
+      "measurable": true
+    }
+  ]
+}

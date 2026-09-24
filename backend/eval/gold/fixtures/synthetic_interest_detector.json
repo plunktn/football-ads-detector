@@ -1,0 +1,140 @@
+{
+  "notes": "Salida sintética del detector, pareja de clips/synthetic_interest.json. No es un result.json de un partido real. El tramo 530–548 s está en doubtful_segments a propósito: sin esa exclusión NETTPLUS se pasa de ±15%.",
+  "brands": [
+    {
+      "brand_id": "ecuabet",
+      "name": "Ecuabet",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 200,
+          "video_seconds_end": 234,
+          "duration_seconds": 34
+        },
+        {
+          "half": "2T",
+          "video_seconds_start": 4300,
+          "video_seconds_end": 4316,
+          "duration_seconds": 16
+        }
+      ]
+    },
+    {
+      "brand_id": "nettplus",
+      "name": "NETTPLUS",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 500,
+          "video_seconds_end": 548,
+          "duration_seconds": 48
+        },
+        {
+          "half": "2T",
+          "video_seconds_start": 4600,
+          "video_seconds_end": 4606,
+          "duration_seconds": 6
+        }
+      ]
+    },
+    {
+      "brand_id": "lions",
+      "name": "LIONS",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 800,
+          "video_seconds_end": 820,
+          "duration_seconds": 20
+        },
+        {
+          "half": "2T",
+          "video_seconds_start": 4900,
+          "video_seconds_end": 4906,
+          "duration_seconds": 6
+        }
+      ]
+    },
+    {
+      "brand_id": "1xbet",
+      "name": "1xbet",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 900,
+          "video_seconds_end": 916,
+          "duration_seconds": 16
+        }
+      ]
+    },
+    {
+      "brand_id": "siete-com",
+      "name": "SIETE.COM",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 1100,
+          "video_seconds_end": 1115,
+          "duration_seconds": 15
+        }
+      ]
+    },
+    {
+      "brand_id": "grand-aviation",
+      "name": "GRAND AVIATION",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "2T",
+          "video_seconds_start": 5100,
+          "video_seconds_end": 5113,
+          "duration_seconds": 13
+        }
+      ]
+    },
+    {
+      "brand_id": "sponsor-local",
+      "name": "Sponsor local",
+      "panel_kind": "LED",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 600,
+          "video_seconds_end": 700,
+          "duration_seconds": 100
+        }
+      ]
+    }
+  ],
+  "fixed_brands": [
+    {
+      "brand_id": "lona-fija",
+      "name": "Lona fija",
+      "panel_kind": "FIJA",
+      "segments": [
+        {
+          "half": "1T",
+          "video_seconds_start": 0,
+          "video_seconds_end": 4000,
+          "duration_seconds": 4000
+        }
+      ]
+    }
+  ],
+  "doubtful_segments": [
+    {
+      "half": "1T",
+      "video_seconds_start": 530,
+      "video_seconds_end": 548,
+      "duration_seconds": 18,
+      "reason": "illegible_ocr",
+      "doubtful": true,
+      "measurable": false
+    }
+  ]
+}
