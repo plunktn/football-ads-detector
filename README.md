@@ -142,6 +142,39 @@ Un valor inválido o negativo vuelve al default. El objetivo de auditoría
 (±15–20% en tramos no dudosos) se mide con minutos gold; esta fusión no lo
 garantiza sola.
 
+## Marcas de interés y OCR
+
+Los segundos comerciales salen de las marcas en
+`backend/config/interest_brands.yaml` (Ecuabet, NETTPLUS, LIONS, 1xbet,
+SIETE.COM, GRAND AVIATION). Cada alias, incluido un fragmento de OCR como
+`NETT OIUS` o `ECUEBET`, resuelve al id canónico. Para sumar una variante
+nueva, edita ese YAML: no hace falta tocar el matcher.
+
+La lista de playlist (`backend/app/config/brand_aliases.yaml`) sigue aparte.
+Las vallas fijas no usan la lista de interés ni el puente de 8 s.
+
+## Dudoso / no medible
+
+Si la valla está en cuadro pero el OCR no alcanza (texto ilegible, coincidencia
+débil o crop de mala calidad), ese tramo se fusiona en un intervalo de reloj
+con `doubtful: true` y `measurable: false`. Esos segundos:
+
+- no entran al total de la marca;
+- no entran al margen de ±15–20% (el harness gold los resta de ambos lados);
+- aparecen en la hoja **Dudosas** del Excel y en el informe, para revisión.
+
+Un plano sin valla (close-up, bumper, wide) no es dudoso: la LED no estaba en
+cuadro. No hace falta revisarlo.
+
+## Cola de revisión
+
+Después del análisis, la revisión abre en **Dudosos y baja confianza**. La
+exposición ya medida queda plegada. Asigna una marca de interés si reconoces
+el sponsor; si el tramo sigue ilegible, déjalo sin asignar.
+
+El informe (`/informe`) encabeza los **segundos en pantalla** de las marcas de
+interés. El bloque **No medible** lista solo los rangos que hay que mirar.
+
 ## Minutos gold
 
 Para comparar el detector con clips etiquetados a mano, sin re-auditar el
@@ -168,9 +201,10 @@ python eval/gold/compare_gold.py \
 
 **Pass:** en tramos no dudosos, el error de duración por marca queda dentro
 de ±15–20% (`--tolerance 20` por defecto; usa `15` para el extremo estricto).
-El script imprime también el % de tiempo etiquetado como dudoso. El ejemplo
-del repo es solo formato: sin `--detector` el error sale `n/a` y no es una
-medición del detector.
+El script imprime también el % de tiempo etiquetado como dudoso. Si el
+`result.json` trae `doubtful_segments`, ese tiempo no medible se excluye del
+error. El ejemplo del repo es solo formato: sin `--detector` el error sale
+`n/a` y no es una medición del detector.
 
 Detalle corto en `backend/eval/gold/README.md`.
 

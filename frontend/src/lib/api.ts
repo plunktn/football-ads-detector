@@ -621,7 +621,23 @@ export type ReportBrand = {
   frame_count: number;
   count_1t: number;
   count_2t: number;
+  interest?: boolean;
+  canonical_name?: string | null;
   segments: ReportSegment[];
+};
+
+export type ReportDoubtfulSegment = {
+  half: string;
+  clock_start: string;
+  clock_end: string;
+  video_seconds_start: number;
+  video_seconds_end: number;
+  duration_seconds: number;
+  reason: string;
+  reason_label: string;
+  doubtful: boolean;
+  measurable: boolean;
+  ocr_text?: string;
 };
 
 export type JobReport = {
@@ -637,8 +653,13 @@ export type JobReport = {
     duration_label: string;
     minutes: number;
     seconds: number;
+    interest_seconds?: number;
+    interest_brand_count?: number;
+    doubtful_seconds?: number;
+    doubtful_count?: number;
   };
   brands: ReportBrand[];
+  doubtful_segments?: ReportDoubtfulSegment[];
   analyzed_seconds?: number | null;
 };
 

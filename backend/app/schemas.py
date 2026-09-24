@@ -239,7 +239,23 @@ class ReportBrand(BaseModel):
     frame_count: int = 0
     count_1t: int = 0
     count_2t: int = 0
+    interest: bool = False
+    canonical_name: str | None = None
     segments: list[ReportSegment] = Field(default_factory=list)
+
+
+class ReportDoubtfulSegment(BaseModel):
+    half: str
+    clock_start: str
+    clock_end: str
+    video_seconds_start: float
+    video_seconds_end: float
+    duration_seconds: int
+    reason: str = "illegible_ocr"
+    reason_label: str = "no medible"
+    doubtful: bool = True
+    measurable: bool = False
+    ocr_text: str = ""
 
 
 class ReportSummary(BaseModel):
@@ -249,6 +265,10 @@ class ReportSummary(BaseModel):
     duration_label: str = "0 s"
     minutes: int = 0
     seconds: int = 0
+    interest_seconds: int = 0
+    interest_brand_count: int = 0
+    doubtful_seconds: int = 0
+    doubtful_count: int = 0
 
 
 class CatalogReportResponse(BaseModel):
@@ -259,6 +279,7 @@ class CatalogReportResponse(BaseModel):
     created_at: str | None = None
     summary: ReportSummary = Field(default_factory=ReportSummary)
     brands: list[ReportBrand] = Field(default_factory=list)
+    doubtful_segments: list[ReportDoubtfulSegment] = Field(default_factory=list)
     analyzed_seconds: int | None = None
 
 
@@ -280,6 +301,24 @@ class SegmentResult(BaseModel):
     zone_id: str | None = None
     posicion: str | None = None
     tipo_panel: str | None = None
+
+
+class DoubtfulSegment(BaseModel):
+    """LED time the detector could not measure. Excluded from the accuracy claim."""
+
+    half: str
+    clock_start: str
+    clock_end: str
+    video_seconds_start: float
+    video_seconds_end: float
+    duration_seconds: int
+    reason: str = "illegible_ocr"
+    reason_label: str = "no medible"
+    doubtful: bool = True
+    measurable: bool = False
+    ocr_text: str = ""
+    start_frame: int = 0
+    end_frame: int = 0
 
 
 class BrandResult(BaseModel):
@@ -325,6 +364,7 @@ class JobResult(BaseModel):
     hit_rate: float | None = None
     report_xlsx_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    doubtful_segments: list[DoubtfulSegment] = Field(default_factory=list)
 
 class JobSummaryTotals(BaseModel):
     brand_count: int = 0

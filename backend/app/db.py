@@ -391,44 +391,16 @@ def seed_brand_groups() -> None:
         conn.commit()
 
 
-# Canonical aliases merged into existing library rows (idempotent).
-# Does not rename brand ids (logos live under data/brands/{id}).
-_BRAND_ALIAS_SEED: dict[str, tuple[str, tuple[str, ...]]] = {
-    "ecuebet": (
-        "Ecuabet",
-        ("ECUABET", "Ecuabet", "ECUEBET", "ECUA BET"),
-    ),
-    "ecuabet": (
-        "Ecuabet",
-        ("ECUABET", "Ecuabet", "ECUEBET", "ECUA BET"),
-    ),
-    "nettplus": (
-        "NETTPLUS",
-        ("NETTPLUS", "NETT PLUS", "NETTplus", "NET PLUS", "NETPLUS"),
-    ),
-    "siete-com": (
-        "SIETE.COM",
-        ("SIETE.COM", "SIETE", "Siete.com", "SIETECOM"),
-    ),
-    "lions": (
-        "LIONS",
-        ("LIONS", "LIONS SPORTS AND MEDIA", "LIONS SPORTS MEDIA"),
-    ),
-    "grand-aviation": (
-        "GRAND AVIATION",
-        ("GRAND AVIATION", "GRANDAVIATION", "GRAND-AVIATION"),
-    ),
-    "1xbet": (
-        "1xbet",
-        ("1xbet", "1XBET", "1 X BET"),
-    ),
-}
-
-
 def seed_brand_aliases() -> None:
-    """Merge known aliases into existing brands; never wipe custom aliases."""
+    """Merge interest-brand aliases into existing rows; never wipe custom aliases.
+
+    The list comes from ``config/interest_brands.yaml``. Logos stay under
+    ``data/brands/{id}``, so legacy ids are updated in place and not renamed.
+    """
+    from .config.interest_brands import alias_seed_rows
+
     with get_connection() as conn:
-        for brand_id, (preferred_name, aliases) in _BRAND_ALIAS_SEED.items():
+        for brand_id, (preferred_name, aliases) in alias_seed_rows().items():
             row = conn.execute(
                 "SELECT id, nombre, aliases_json FROM brands WHERE id = ? LIMIT 1",
                 (brand_id,),

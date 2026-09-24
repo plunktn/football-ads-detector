@@ -1,0 +1,60 @@
+# Marcas cuyo tiempo en pantalla entra al informe comercial.
+# Los alias (fragmentos de OCR incluidos) resuelven al id canónico.
+# Edita este archivo; no hace falta hardcodear variantes en Python.
+# Las vallas fijas no usan esta lista.
+
+brands:
+  - id: ecuabet
+    name: Ecuabet
+    legacy_ids:
+      - ecuebet
+    aliases:
+      - ECUABET
+      - Ecuabet
+      - ECUA BET
+      - ECUABET COM
+      - ECUEBET
+  - id: nettplus
+    name: NETTPLUS
+    aliases:
+      - NETT PLUS
+      - NETTPLUS
+      - NET PLUS
+      - NETPLUS
+      - NETT.PLUS
+      - NETT.plus
+      - NETTplus
+      - NETTPIUS
+      - NETTOIUS
+      - NETTOLUS
+      - NETTDIUS
+      - NETT OIUS
+      - NETT OLUS
+      - NETT OluS
+  - id: lions
+    name: LIONS
+    aliases:
+      - LIONS
+      - LIONS SPORTS AND MEDIA
+      - LIONS SPORT AND MEDIA
+      - LIONS SPORTS MEDIA
+      - LIONS SPORTS & MEDIA
+  - id: 1xbet
+    name: 1xbet
+    aliases:
+      - 1XBET
+      - 1xbet
+      - 1 X BET
+  - id: siete-com
+    name: SIETE.COM
+    aliases:
+      - SIETE.COM
+      - SIETE
+      - Siete.com
+      - SIETECOM
+  - id: grand-aviation
+    name: GRAND AVIATION
+    aliases:
+      - GRAND AVIATION
+      - GRANDAVIATION
+      - GRAND-AVIATION

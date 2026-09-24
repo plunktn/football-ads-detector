@@ -9,6 +9,7 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
+from ..config.interest_brands import canonical_interest_name, is_interest_brand
 from ..schemas import BrandResult, ComplianceRow, DOUBTFUL_STATUSES, VerificationStatus
 from .playlist import PlaylistSlot
 
@@ -34,6 +35,12 @@ def _minuto_label(start_sec: float) -> str:
     return f"{minute}.{second:02d}"
 
 
+def _field(item: Any, name: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(name, "")
+    return getattr(item, name, "")
+
+
 def _scheduled_keys(slots: Sequence[PlaylistSlot]) -> set[tuple[str, str, int]]:
     """(period, catalog-ish brand upper, start_sec rounded) for extras filter."""
     keys: set[tuple[str, str, int]] = set()
@@ -55,6 +62,7 @@ def write_commercial_report(
     analyzed_seconds: int = 0,
     include_fixed: bool = False,
     doubtful: Sequence[Any] | None = None,
+    unmeasurable: Sequence[Any] | None = None,
 ) -> Path:
     """Write LED-first workbook.
 
@@ -70,6 +78,7 @@ def write_commercial_report(
     slots = list(slots or [])
     compliance = list(compliance or [])
     doubtful = list(doubtful or [])
+    unmeasurable = list(unmeasurable or [])
     workbook = Workbook()
 
     resumen = workbook.active
@@ -85,9 +94,16 @@ def write_commercial_report(
             "Seg/salida",
             "Conteo 1T",
             "Conteo 2T",
+            "Interés",
+            "Canónica",
         ],
     )
-    for brand in led_brands:
+    def _interest_sort(brand: BrandResult) -> tuple[int, int, str]:
+        interest = is_interest_brand(brand.brand_id, brand.name)
+        return (0 if interest else 1, -int(brand.total_seconds), brand.name.lower())
+
+    for brand in sorted(led_brands, key=_interest_sort):
+        canonical = canonical_interest_name(brand.brand_id, brand.name) or ""
         resumen.append(
             [
                 brand.name,
@@ -97,6 +113,8 @@ def write_commercial_report(
                 _seconds_per_salida(brand),
                 brand.count_1t,
                 brand.count_2t,
+                "sí" if canonical else "no",
+                canonical,
             ]
         )
     salidas = workbook.create_sheet("Salidas LED")
@@ -213,7 +231,26 @@ def write_commercial_report(
                 row.reason or "",
             ]
         )
+    for item in unmeasurable:
+        reason = _field(item, "reason_label") or _field(item, "reason") or "no medible"
+        dudosas.append(
+            [
+                "led",
+                "",
+                _field(item, "half"),
+                _field(item, "video_seconds_start"),
+                reason,
+                "",
+                "",
+                _field(item, "ocr_text"),
+            ]
+        )
     for item in doubtful:
+        reason = str(getattr(item, "reason", "") or "")
+        if reason.startswith("no_usable_led_plane"):
+            continue
+        if unmeasurable and reason in {"ambiguous_ocr", "illegible_ocr", "low_led_quality", "roi_skipped"}:
+            continue
         dudosas.append(
             [
                 "discovery",

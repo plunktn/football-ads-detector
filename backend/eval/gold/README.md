@@ -38,8 +38,9 @@ dentro de **±15–20%** frente al ojo humano. El default del script es 20
 (`--tolerance 15` para el extremo estricto).
 
 El % dudoso es el tiempo etiquetado con `doubtful: true` sobre el tiempo
-etiquetado total. Esos segundos no entran al error. El detector todavía no
-marca dudosos: si el segmento no trae `doubtful`, cuenta como tiempo limpio.
+etiquetado total. Esos segundos no entran al error. Si `result.json` trae
+`doubtful_segments`, ese tiempo no medible también se resta de ambos lados
+antes del error. Un segmento sin `doubtful` sigue contando como tiempo limpio.
 
 `clips/example.json` es solo formato. Corrido sin `--detector` imprime el
 % dudoso de esas filas de ejemplo y deja el error en `n/a`. Eso no es un

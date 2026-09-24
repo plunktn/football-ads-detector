@@ -15,58 +15,17 @@ import cv2
 import numpy as np
 
 from ..config.aliases import aliases_for, is_overlay_name, resolve_catalog_name
+from ..config.interest_brands import (
+    canonical_alias_table,
+    matches_interest_brand,
+    resolve_interest_fragment,
+)
 from ..schemas import BrandInput
 from .extract.template_match import DEFAULT_SCORE_THRESHOLD, detect_fixed_brands
 from .ocr import OcrHit
 
 
-# Canonical example from PLAN.md §2 / Fase 5. Merged whenever the user
-# name is a close variant of these brands.
-# NETTPIUS/OIUS/OLUS: RapidOCR on cyan LED often reads P as O/D and L as I.
-_CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
-    "NETT PLUS": (
-        "NETTPLUS",
-        "NETPLUS",
-        "NET PLUS",
-        "NETT PLUS",
-        "NETTplus",
-        "NETTPIUS",
-        "NETTOIUS",
-        "NETTOLUS",
-        "NETTDIUS",
-        "NETT OIUS",
-        "NETT OLUS",
-    ),
-    "ECUABET": (
-        "ECUABET",
-        "ECUA BET",
-        "ECUABET COM",
-        "ECUEBET",
-        "Ecuabet",
-    ),
-    "LIONS SPORTS AND MEDIA": (
-        "LIONS SPORTS AND MEDIA",
-        "LIONS SPORT AND MEDIA",
-        "LIONS SPORTS MEDIA",
-        "LIONS",
-    ),
-    "SIETE.COM": (
-        "SIETE.COM",
-        "SIETE",
-        "Siete.com",
-        "SIETECOM",
-    ),
-    "GRAND AVIATION": (
-        "GRAND AVIATION",
-        "GRANDAVIATION",
-        "GRAND-AVIATION",
-    ),
-    "1XBET": (
-        "1XBET",
-        "1xbet",
-        "1 X BET",
-    ),
-}
+# OCR garbles such as NETT OIUS live in config/interest_brands.yaml, not here.
 
 _PARTIAL_RATIO_MIN = 86
 _TOKEN_SET_RATIO_MIN = 86
@@ -167,11 +126,15 @@ def _strip_ligaecuabet(haystack: str, compact_hay: str) -> tuple[str, str]:
 def _canonical_aliases_for(normalized_name: str) -> tuple[str, ...]:
     compact_name = _compact(normalized_name)
     merged: list[str] = []
-    for key, aliases in _CANONICAL_ALIASES.items():
+    for key, aliases in canonical_alias_table().items():
         variants = {_compact(norm(key)), *(_compact(norm(alias)) for alias in aliases)}
         if compact_name in variants:
             merged.extend(aliases)
     merged.extend(aliases_for(normalized_name))
+    resolved = resolve_interest_fragment(normalized_name)
+    if resolved is not None:
+        merged.extend(resolved.aliases)
+        merged.append(resolved.name)
     return tuple(dict.fromkeys(merged))
 
 
@@ -256,7 +219,21 @@ def _count_disjoint_spans(compact_hay: str, needles: Sequence[str]) -> int:
     return len(merged)
 
 
+def _prepared_is_interest(brand: PreparedBrand, fragment: str) -> bool:
+    resolved = resolve_interest_fragment(fragment)
+    if resolved is None:
+        return False
+    if matches_interest_brand(brand.id, brand.name, resolved):
+        return True
+    for needle in brand.needles:
+        if matches_interest_brand(needle, needle, resolved):
+            return True
+    return False
+
+
 def _box_matches_brand(brand: PreparedBrand, raw_text: str) -> bool:
+    if _prepared_is_interest(brand, raw_text):
+        return True
     haystack = norm(raw_text)
     if not haystack:
         return False
@@ -379,7 +356,9 @@ def match_brand_ids(
 
     Fuzzy thresholds (rapidfuzz): partial_ratio and token_set_ratio ≥ 86
     (``_PARTIAL_RATIO_MIN`` / ``_TOKEN_SET_RATIO_MIN``). Needles come from the
-    brand name, DB aliases, YAML catalog aliases, and ``_CANONICAL_ALIASES``.
+    brand name, DB aliases, the playlist alias table, and
+    ``config/interest_brands.yaml``. An OCR fragment that resolves to an
+    interest brand counts for that canonical brand.
     LED rows require ``min_repeats`` (default 2) spatial/text repeats.
     """
     clean_hits = filter_overlay_hits(hits) if hits is not None else None

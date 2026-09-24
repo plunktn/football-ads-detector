@@ -120,7 +120,14 @@ function BrandSection({
     <section className="overflow-hidden rounded-2xl border border-border/80 bg-card/70 shadow-xl shadow-black/10">
       <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border/60 px-5 py-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">{brand.name}</h2>
+          <h2 className="text-xl font-semibold tracking-tight">
+            {brand.name}
+            {brand.interest ? (
+              <Badge className="ml-2 align-middle bg-primary/15 text-[10px] text-primary">
+                Interés
+              </Badge>
+            ) : null}
+          </h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {brand.appearances}{" "}
             {brand.appearances === 1 ? "aparición" : "apariciones"} · {brand.duration_label}{" "}
@@ -256,8 +263,8 @@ function InformeContent() {
           </p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Resultado del partido</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Resumen por marca a partir del catálogo confirmado: apariciones, tiempo total y
-            cada tramo de–a. Abrí una salida para ver los frames.
+            Segundos por marca de interés, medidos en intervalos de reloj ya fusionados.
+            Los tramos dudosos no entran a ese total: revísalos aparte.
           </p>
         </div>
         <Link href="/" className={cn(buttonVariants({ variant: "outline" }), "h-10 gap-2")}>
@@ -277,7 +284,7 @@ function InformeContent() {
         <div className="rounded-2xl border border-destructive/40 bg-destructive/10 px-5 py-6">
           <p className="text-sm text-destructive">{error}</p>
           <p className="mt-2 text-xs text-muted-foreground">
-            Si todavía no confirmaste el catálogo, volvé a la revisión y dale a Confirmar.
+            Si todavía no confirmaste el catálogo, vuelve a la revisión y confirma.
           </p>
           <Link
             href="/"
@@ -291,30 +298,37 @@ function InformeContent() {
       {report ? (
         <div className="space-y-8">
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl border border-border/70 bg-card/80 p-4">
+            <div className="rounded-2xl border border-border/70 bg-card/80 p-4 sm:col-span-2">
               <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                Marcas
+                Segundos en pantalla · marcas de interés
               </p>
-              <p className="mt-2 text-3xl font-semibold tabular-nums">{report.summary.brand_count}</p>
+              <p className="mt-2 text-3xl font-semibold tracking-tight text-primary">
+                {report.summary.interest_seconds ?? report.summary.total_seconds} s
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {report.summary.interest_brand_count ?? report.summary.brand_count} marcas · intervalos
+                de reloj fusionados
+                {report.stadium_id ? ` · ${report.stadium_id}` : ""}
+              </p>
             </div>
             <div className="rounded-2xl border border-border/70 bg-card/80 p-4">
               <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                Apariciones
+                Apariciones medidas
               </p>
-              <p className="mt-2 text-3xl font-semibold tabular-nums text-primary">
+              <p className="mt-2 text-3xl font-semibold tabular-nums">
                 {report.summary.appearances}
               </p>
             </div>
-            <div className="rounded-2xl border border-border/70 bg-card/80 p-4 sm:col-span-2">
-              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                Tiempo total de exposición
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-200/80">
+                No medible
               </p>
-              <p className="mt-2 text-3xl font-semibold tracking-tight">
-                {report.summary.duration_label}
+              <p className="mt-2 text-3xl font-semibold tabular-nums text-amber-100">
+                {report.summary.doubtful_seconds ?? 0} s
               </p>
-              {report.stadium_id ? (
-                <p className="mt-2 text-xs text-muted-foreground">Estadio · {report.stadium_id}</p>
-              ) : null}
+              <p className="mt-2 text-xs text-amber-100/70">
+                {report.summary.doubtful_count ?? 0} tramos fuera del ±15–20%
+              </p>
             </div>
           </section>
 
@@ -328,8 +342,8 @@ function InformeContent() {
                 <thead>
                   <tr className="border-b border-border/60 bg-muted/20 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                     <th className="px-5 py-3 font-medium">Marca</th>
+                    <th className="px-3 py-3 font-medium">Segundos</th>
                     <th className="px-3 py-3 font-medium">Apariciones</th>
-                    <th className="px-3 py-3 font-medium">Tiempo</th>
                     <th className="px-3 py-3 font-medium">1T</th>
                     <th className="px-3 py-3 font-medium">2T</th>
                     <th className="px-5 py-3 font-medium">Frames</th>
@@ -338,9 +352,16 @@ function InformeContent() {
                 <tbody>
                   {report.brands.map((brand) => (
                     <tr key={brand.brand_id} className="border-b border-border/40 last:border-0">
-                      <td className="px-5 py-3 font-medium">{brand.name}</td>
+                      <td className="px-5 py-3 font-medium">
+                        {brand.name}
+                        {brand.interest ? (
+                          <span className="ml-2 font-mono text-[10px] uppercase tracking-wide text-primary">
+                            interés
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-3 font-mono text-primary">{brand.total_seconds} s</td>
                       <td className="px-3 py-3 font-mono tabular-nums">{brand.appearances}</td>
-                      <td className="px-3 py-3 font-mono text-primary">{brand.duration_label}</td>
                       <td className="px-3 py-3 font-mono tabular-nums text-muted-foreground">
                         {brand.count_1t}
                       </td>
@@ -362,6 +383,54 @@ function InformeContent() {
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section className="overflow-hidden rounded-2xl border border-amber-500/30 bg-amber-500/5">
+            <div className="border-b border-amber-500/20 px-5 py-3">
+              <h2 className="text-sm font-semibold">Revisión mínima · no medible</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Estos rangos tienen la valla a la vista pero el OCR no alcanza para medirlos.
+                Quedan fuera del margen de ±15–20% y no hace falta revisar el resto del partido.
+              </p>
+            </div>
+            {(report.doubtful_segments ?? []).length === 0 ? (
+              <p className="px-5 py-6 text-sm text-muted-foreground">
+                No hay tramos dudosos en este informe.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-amber-500/20 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                      <th className="px-5 py-3 font-medium">Mitad</th>
+                      <th className="px-3 py-3 font-medium">Desde</th>
+                      <th className="px-3 py-3 font-medium">Hasta</th>
+                      <th className="px-3 py-3 font-medium">Segundos</th>
+                      <th className="px-5 py-3 font-medium">Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(report.doubtful_segments ?? []).map((segment) => (
+                      <tr
+                        key={`${segment.half}-${segment.video_seconds_start}`}
+                        className="border-b border-amber-500/10 last:border-0"
+                      >
+                        <td className="px-5 py-3 font-mono text-xs">{segment.half}</td>
+                        <td className="px-3 py-3 font-mono text-xs">{segment.clock_start}</td>
+                        <td className="px-3 py-3 font-mono text-xs">{segment.clock_end}</td>
+                        <td className="px-3 py-3 font-mono text-xs text-amber-100">
+                          {segment.duration_seconds} s
+                        </td>
+                        <td className="px-5 py-3 text-xs text-muted-foreground">
+                          {segment.reason_label}
+                          {segment.ocr_text ? ` · ${segment.ocr_text}` : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           <div className="space-y-6">

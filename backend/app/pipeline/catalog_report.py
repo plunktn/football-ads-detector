@@ -13,6 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from .. import db
+from ..config.interest_brands import canonical_interest_name
+from .aggregate import FrameObservation
+from .doubtful import (
+    UnmeasurableInterval,
+    aggregate_unmeasurable,
+    as_public_segment,
+    covers_from_segments,
+    subtract_measured,
+    union_intervals,
+)
 from .led_timing import LedTiming, PresenceSample, load_led_timing, merge_presence
 
 
@@ -177,10 +187,13 @@ def build_catalog_report(
                 }
             )
         total_seconds = sum(int(seg["duration_seconds"]) for seg in segments_out)
+        canonical = canonical_interest_name(brand_id, name)
         brands_out.append(
             {
                 "brand_id": brand_id,
-                "name": name,
+                "name": canonical or name,
+                "canonical_name": canonical,
+                "interest": canonical is not None,
                 "appearances": len(segments_out),
                 "total_seconds": total_seconds,
                 "minutes": total_seconds // 60,
@@ -193,9 +206,25 @@ def build_catalog_report(
             }
         )
 
-    brands_out.sort(key=lambda item: (-int(item["total_seconds"]), str(item["name"]).lower()))
+    brands_out.sort(
+        key=lambda item: (
+            0 if item["interest"] else 1,
+            -int(item["total_seconds"]),
+            str(item["name"]).lower(),
+        )
+    )
     total_seconds = sum(int(item["total_seconds"]) for item in brands_out)
     total_appearances = sum(int(item["appearances"]) for item in brands_out)
+    interest_brands = [item for item in brands_out if item["interest"]]
+    interest_seconds = sum(int(item["total_seconds"]) for item in interest_brands)
+    doubtful_segments = _doubtful_segments(
+        job_id,
+        job,
+        brands_out,
+        interval=interval,
+        timing=resolved,
+    )
+    doubtful_seconds = sum(int(item["duration_seconds"]) for item in doubtful_segments)
 
     stadium_id = job["stadium_id"] if "stadium_id" in job.keys() else None
     analyzed = None
@@ -214,7 +243,99 @@ def build_catalog_report(
             "duration_label": _format_duration(total_seconds),
             "minutes": total_seconds // 60,
             "seconds": total_seconds % 60,
+            "interest_seconds": interest_seconds,
+            "interest_brand_count": len(interest_brands),
+            "doubtful_seconds": doubtful_seconds,
+            "doubtful_count": len(doubtful_segments),
         },
         "brands": brands_out,
+        "doubtful_segments": doubtful_segments,
         "analyzed_seconds": analyzed,
     }
+
+
+def _frame_observation(row: dict[str, Any]) -> FrameObservation:
+    text = str(row.get("ocr_text") or "")
+    ambiguous: frozenset[str] = frozenset()
+    if not text.strip():
+        ambiguous = frozenset({"low-confidence"})
+    return FrameObservation(
+        half=str(row.get("half") or ""),
+        time_seconds=float(row.get("time_seconds") or 0.0),
+        frame_idx=int(row.get("frame_idx") or 0),
+        detected_brand_ids=frozenset(),
+        skipped=False,
+        zone_id=row.get("zone_id"),
+        posicion=row.get("posicion"),
+        ocr_text=text,
+        ambiguous_brand_ids=ambiguous,
+    )
+
+
+def _stored_unmeasurable(job: Any) -> list[UnmeasurableInterval]:
+    directory = job["directory"] if "directory" in job.keys() else None
+    if not directory:
+        return []
+    path = Path(directory) / "result.json"
+    if not path.is_file():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    intervals: list[UnmeasurableInterval] = []
+    for row in payload.get("doubtful_segments") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            start = float(row.get("video_seconds_start"))
+            end = float(row.get("video_seconds_end"))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        intervals.append(
+            UnmeasurableInterval(
+                half=str(row.get("half") or ""),
+                start_seconds=start,
+                end_seconds=end,
+                duration_seconds=int(row.get("duration_seconds") or max(1, round(end - start))),
+                reason=str(row.get("reason") or "illegible_ocr"),
+                ocr_text=str(row.get("ocr_text") or ""),
+                start_frame=int(row.get("start_frame") or 0),
+                end_frame=int(row.get("end_frame") or 0),
+            )
+        )
+    return intervals
+
+
+def _doubtful_segments(
+    job_id: str,
+    job: Any,
+    brands_out: list[dict[str, Any]],
+    *,
+    interval: float,
+    timing: LedTiming,
+) -> list[dict[str, Any]]:
+    covers: list[tuple[str, float, float]] = []
+    for brand in brands_out:
+        covers.extend(covers_from_segments(brand.get("segments") or []))
+    attention: list[FrameObservation] = []
+    for row in db.list_job_frames(job_id):
+        if row.get("user_verdict") == "false_positive":
+            continue
+        if row.get("machine_label") != "attention":
+            continue
+        if row.get("brand_id") and row.get("user_verdict") == "assigned":
+            continue
+        attention.append(_frame_observation(row))
+    from_frames = aggregate_unmeasurable(
+        attention,
+        sample_interval=interval,
+        timing=timing,
+        covers=covers,
+    )
+    combined = union_intervals(
+        subtract_measured([*from_frames, *_stored_unmeasurable(job)], covers)
+    )
+    return [as_public_segment(item) for item in combined]
